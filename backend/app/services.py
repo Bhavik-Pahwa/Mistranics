@@ -405,6 +405,15 @@ def transition(session, alert_id, action, reason, policy):
         .with_for_update()
         .execution_options(populate_existing=True)
     )
+    if alert.incident_key != "__machine__":
+        if action != "acknowledge" or alert.status != "active":
+            raise DomainError(
+                "Condition recovery is evidence-driven; only active incident acknowledgment is allowed here",
+                409,
+            )
+        alert.status, alert.acknowledged_at = "acknowledged", now()
+        event(session, alert, "acknowledged", {"actor": "operator", "reason": reason})
+        return alert
     if not policy or not policy.alerts_enabled:
         raise DomainError("Alert policy unavailable", 409)
     if action == "acknowledge":

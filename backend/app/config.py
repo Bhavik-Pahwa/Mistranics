@@ -29,3 +29,19 @@ class Settings(BaseSettings):
     max_query_days: int = Field(31, ge=1)
     context_seconds: int = Field(120, ge=60)
     retry_seconds: int = Field(5, ge=0)
+
+    ml_enabled: bool = False
+    ml_limits_file: str | None = None
+    ml_model_file: str | None = None
+    ml_incident_policy_file: str | None = None
+    ai_enabled: bool = False
+    ai_provider_url: str = "http://localhost:11434"
+    ai_provider_token: str = ""
+    ai_llm_model: str = ""
+    ai_embedding_model: str = ""
+    ai_provider_timeout: int = Field(60, ge=1, le=180)
+    ai_stale_seconds: int = Field(15, ge=3)
+    ai_ocr_enabled: bool = False
+    ai_ocr_language: str = "eng"
+    ai_max_pdf_pages: int = Field(100, ge=1, le=500)
+    ai_max_chunks: int = Field(1000, ge=1, le=5000)

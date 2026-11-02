@@ -68,3 +68,7 @@ The registry is configuration-backed rather than a management subsystem. JSONB s
 There are no ML algorithms, engineered feature rows, model training/artifacts, waveform reconstruction, LLM/RAG, notifications or protective controls. Only external detector outputs are mocked in demos. The backend uses real MQTT and PostgreSQL.
 
 Unresolved operational inputs remain explicit: actual broker/topic/QoS credentials, final payload and registry approvals, conversion mappings, detector appendices and transport/run-ID agreement, lateness/reprocessing policy, completeness/fusion approval, severity/recovery/incident policy, identity provider, retention and backups. No production policy approval is claimed. Runtime/demo and validation commands are in README.md; the exact implemented handoff is API_CONTRACT.md.
+
+## Optional classical/applied AI integration
+
+The original backend architecture above remains the default with ML_ENABLED=false and AI_ENABLED=false. Optional integration now consumes canonical persisted windows through the existing worker and mounts applied AI routes in the same application/database. Additive 003/004 migrations extend existing alerts with incident_key and add checkpoint, evidence, conversation/document and outbox entities. The algorithms remain under ../ML and applied AI remains under ../AI. See ../AI_SYSTEM_IMPLEMENTATION.md and ../AI/API_CONTRACT.md for the implemented extension, preservation rules and exact lifecycle behavior.

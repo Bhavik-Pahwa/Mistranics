@@ -1,8 +1,10 @@
 import uuid
+import math
 import numpy as np
 from datetime import datetime, timezone
 from typing import Optional, List
-from ML.models.features import FeatureSnapshot, FEATURE_SCHEMA_VERSION, FEATURE_COLUMNS
+from ML.models.telemetry import ReadingQuality
+from ML.models.features import FeatureSnapshot, FEATURE_COLUMNS
 from ML.models.results import (
     DetectorType,
     EvaluationStatus,
@@ -26,7 +28,9 @@ class IsolationForestInference:
     def load_model(self, filepath: str) -> None:
         self.model_package = load_model_package(filepath)
 
-    def score(self, snapshot: FeatureSnapshot, run_id: Optional[str] = None) -> DetectorResultEnvelope:
+    def score(
+        self, snapshot: FeatureSnapshot, run_id: Optional[str] = None
+    ) -> DetectorResultEnvelope:
         eval_run_id = run_id or f"run-iso-{uuid.uuid4().hex[:8]}"
         now = datetime.now(timezone.utc)
 
@@ -47,7 +51,10 @@ class IsolationForestInference:
             )
 
         # 2. Check feature schema compatibility
-        if snapshot.feature_schema_version != self.model_package.metadata.feature_schema_version:
+        if (
+            snapshot.feature_schema_version
+            != self.model_package.metadata.feature_schema_version
+        ):
             return DetectorResultEnvelope(
                 schema_version="1.0",
                 detector=DetectorType.isolation_forest,
@@ -66,6 +73,30 @@ class IsolationForestInference:
                 ],
             )
 
+        invalid = (
+            snapshot.missing_features
+            or snapshot.insufficient_history
+            or snapshot.quality_status != ReadingQuality.valid
+            or set(snapshot.features) != set(FEATURE_COLUMNS)
+            or self.model_package.metadata.feature_columns != FEATURE_COLUMNS
+            or not all(math.isfinite(v) for v in snapshot.features.values())
+            or not math.isfinite(self.model_package.metadata.decision_threshold)
+        )
+        if invalid:
+            return DetectorResultEnvelope(
+                detector=DetectorType.isolation_forest,
+                machine_id=snapshot.machine_id,
+                window_id=snapshot.snapshot_id,
+                run_id=eval_run_id,
+                status=EvaluationStatus.insufficient_data,
+                findings=[],
+                data_quality=DataQualityMetadata(status=ReadingQuality.suspect),
+                model_or_config_version=self.model_package.metadata.model_version,
+                model_version=self.model_package.metadata.model_version,
+                feature_schema_version=snapshot.feature_schema_version,
+                skipped_reasons=["Incomplete, nonfinite or incompatible feature input"],
+            )
+
         # 3. Construct 2D vector with exact column order
         vector = snapshot.to_ordered_vector()
         X = np.array([vector], dtype=float)
@@ -73,6 +104,8 @@ class IsolationForestInference:
         # 4. Score sample using fitted estimator
         try:
             score_val = float(self.model_package.estimator.score_samples(X)[0])
+            if not math.isfinite(score_val):
+                raise ValueError("Estimator returned nonfinite score")
         except Exception as e:
             return DetectorResultEnvelope(
                 schema_version="1.0",
@@ -85,6 +118,8 @@ class IsolationForestInference:
                 findings=[],
                 data_quality=DataQualityMetadata(status=snapshot.quality_status),
                 model_or_config_version=self.model_package.metadata.model_version,
+                model_version=self.model_package.metadata.model_version,
+                feature_schema_version=snapshot.feature_schema_version,
                 skipped_reasons=[f"Scoring error: {str(e)}"],
             )
 
@@ -125,7 +160,9 @@ class IsolationForestInference:
             findings=findings,
             data_quality=DataQualityMetadata(
                 status=snapshot.quality_status,
-                warnings=[f"Missing features: {', '.join(snapshot.missing_features)}"] if snapshot.missing_features else [],
+                warnings=[f"Missing features: {', '.join(snapshot.missing_features)}"]
+                if snapshot.missing_features
+                else [],
             ),
             model_or_config_version=self.model_package.metadata.model_version,
             model_version=self.model_package.metadata.model_version,
@@ -137,4 +174,3 @@ class IsolationForestInference:
             },
             skipped_reasons=[],
         )
-

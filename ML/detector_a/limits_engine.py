@@ -1,4 +1,5 @@
 import uuid
+import math
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from ML.models.telemetry import ValidatedTelemetryRecord, ReadingQuality
@@ -35,13 +36,19 @@ class ManufacturerLimitsEngine:
         for lim in limits:
             self._limits[lim.limit_id] = lim
 
-    def get_approved_limits_for_machine(self, machine_id: str) -> List[ManufacturerLimitRecord]:
+    def get_approved_limits_for_machine(
+        self, machine_id: str
+    ) -> List[ManufacturerLimitRecord]:
         return [
-            lim for lim in self._limits.values()
-            if lim.machine_id == machine_id and lim.status == LimitVerificationStatus.approved
+            lim
+            for lim in self._limits.values()
+            if lim.machine_id == machine_id
+            and lim.status == LimitVerificationStatus.approved
         ]
 
-    def evaluate(self, record: ValidatedTelemetryRecord, run_id: Optional[str] = None) -> DetectorResultEnvelope:
+    def evaluate(
+        self, record: ValidatedTelemetryRecord, run_id: Optional[str] = None
+    ) -> DetectorResultEnvelope:
         eval_run_id = run_id or f"run-limits-{uuid.uuid4().hex[:8]}"
         now = datetime.now(timezone.utc)
 
@@ -50,21 +57,33 @@ class ManufacturerLimitsEngine:
         skipped_reasons: List[str] = []
 
         # Check if any limits were registered but not approved
-        all_machine_limits = [lim for lim in self._limits.values() if lim.machine_id == record.machine_id]
-        unapproved = [lim for lim in all_machine_limits if lim.status != LimitVerificationStatus.approved]
+        all_machine_limits = [
+            lim for lim in self._limits.values() if lim.machine_id == record.machine_id
+        ]
+        unapproved = [
+            lim
+            for lim in all_machine_limits
+            if lim.status != LimitVerificationStatus.approved
+        ]
         if unapproved and not approved_limits:
             skipped_reasons.append(
                 f"No approved limits available for machine {record.machine_id} ({len(unapproved)} unapproved limit(s) ignored at runtime)"
             )
 
         if not all_machine_limits:
-            skipped_reasons.append(f"No limits configured for machine {record.machine_id}")
+            skipped_reasons.append(
+                f"No limits configured for machine {record.machine_id}"
+            )
 
+        checked = 0
         ctx = record.operating_context
 
         for reading in record.readings:
             # Data-quality check: missing or suspect values cannot be evaluated against limits
-            if reading.quality != ReadingQuality.valid or reading.value_normalized is None:
+            if (
+                reading.quality != ReadingQuality.valid
+                or reading.value_normalized is None
+            ):
                 skipped_reasons.append(
                     f"Reading {reading.sensor_id} ({reading.parameter}) skipped due to quality status: {reading.quality}"
                 )
@@ -72,7 +91,8 @@ class ManufacturerLimitsEngine:
 
             # Find matching approved limits for this parameter and optional sensor_id
             matching_limits = [
-                lim for lim in approved_limits
+                lim
+                for lim in approved_limits
                 if lim.parameter.lower() == reading.parameter.lower()
                 and (lim.sensor_id is None or lim.sensor_id == reading.sensor_id)
             ]
@@ -90,7 +110,22 @@ class ManufacturerLimitsEngine:
                     )
                     continue
 
+                if reading.unit_normalized != lim.unit:
+                    skipped_reasons.append(f"Unit mismatch for {lim.limit_id}")
+                    continue
+                if lim.time_basis != TimeBasis.instantaneous:
+                    skipped_reasons.append(
+                        f"Unsupported time basis for {lim.limit_id}: requires upstream duration/average evidence"
+                    )
+                    continue
+                if lim.lower_limit is None and lim.upper_limit is None:
+                    skipped_reasons.append(f"No numerical bounds for {lim.limit_id}")
+                    continue
                 val = reading.value_normalized
+                if not math.isfinite(val):
+                    skipped_reasons.append(f"Nonfinite reading for {lim.limit_id}")
+                    continue
+                checked += 1
 
                 # Upper limit check
                 if lim.upper_limit is not None and val > lim.upper_limit:
@@ -109,7 +144,13 @@ class ManufacturerLimitsEngine:
                             limit_category=lim.category.value,
                             evidence_time=record.measured_at,
                             source_reference=lim.source.model_dump(),
-                            details={"excess": excess, "status": lim.status.value},
+                            details={
+                                "excess": excess,
+                                "status": lim.status.value,
+                                "lower_limit": lim.lower_limit,
+                                "upper_limit": lim.upper_limit,
+                                "config_version": lim.config_version,
+                            },
                         )
                     )
 
@@ -130,7 +171,13 @@ class ManufacturerLimitsEngine:
                             limit_category=lim.category.value,
                             evidence_time=record.measured_at,
                             source_reference=lim.source.model_dump(),
-                            details={"shortfall": shortfall, "status": lim.status.value},
+                            details={
+                                "shortfall": shortfall,
+                                "status": lim.status.value,
+                                "lower_limit": lim.lower_limit,
+                                "upper_limit": lim.upper_limit,
+                                "config_version": lim.config_version,
+                            },
                         )
                     )
 
@@ -141,12 +188,18 @@ class ManufacturerLimitsEngine:
             window_id=record.window_id,
             run_id=eval_run_id,
             evaluated_at=now,
-            status=EvaluationStatus.completed,
+            status=EvaluationStatus.completed
+            if checked
+            else EvaluationStatus.insufficient_data,
             findings=findings,
-            data_quality=DataQualityMetadata(status=record.quality_status, warnings=record.quality_warnings),
+            data_quality=DataQualityMetadata(
+                status=record.quality_status, warnings=record.quality_warnings
+            ),
             model_or_config_version=self.config_version,
             config_version=self.config_version,
-            metrics={"approved_limits_checked": len(approved_limits), "violations_found": len(findings)},
+            metrics={
+                "approved_limits_checked": checked,
+                "violations_found": len(findings),
+            },
             skipped_reasons=skipped_reasons,
         )
-

@@ -116,6 +116,9 @@ class Alert(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
     asset_id: Mapped[str] = mapped_column(ForeignKey("assets.asset_id"))
     decision_id: Mapped[str] = mapped_column(ForeignKey("anomaly_decisions.id"))
+    incident_key: Mapped[str] = mapped_column(
+        default="__machine__", server_default="__machine__"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     status: Mapped[str]
     severity: Mapped[str | None]
@@ -127,6 +130,7 @@ class Alert(Base):
 Index(
     "uq_active_machine_incident",
     Alert.asset_id,
+    Alert.incident_key,
     unique=True,
     postgresql_where=Alert.status.in_(["active", "acknowledged"]),
     sqlite_where=Alert.status.in_(["active", "acknowledged"]),
