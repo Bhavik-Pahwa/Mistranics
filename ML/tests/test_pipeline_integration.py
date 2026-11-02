@@ -128,9 +128,9 @@ def test_end_to_end_stream_processing(trained_pipeline):
     # 2. Detector A - Statistical: persistence count is 2, this is the 1st violation
     assert len(anomaly_out.statistical_result.findings) == 0
 
-    # 3. Detector B - Isolation Forest: detects severe multivariate anomaly!
-    assert len(anomaly_out.isolation_forest_result.findings) == 1
-    assert anomaly_out.isolation_forest_result.findings[0].rule_id == "isolation_forest_anomaly"
+    # Missing real extrema/peaks and incomplete 60s history must not be invented.
+    assert anomaly_out.isolation_forest_result.status == EvaluationStatus.insufficient_data
+    assert anomaly_out.isolation_forest_result.findings == []
 
     # Window 7: 2nd consecutive violation window satisfies statistical persistence!
     t_anomaly_2 = t0 + timedelta(seconds=18)

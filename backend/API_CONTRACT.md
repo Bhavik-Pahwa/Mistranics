@@ -103,3 +103,9 @@ POST /alerts/{alert_id}/acknowledge and POST /alerts/{alert_id}/resolve require 
 All paths are relative to backend working directory. Configure DATABASE_URL (PostgreSQL), REGISTRY_FILE, POLICY_FILE (optional), API_TOKEN, INTERNAL_TOKEN, OPERATOR_TOKEN, MQTT_ENABLED/HOST/PORT/TOPIC/CLIENT_ID/USERNAME/PASSWORD/TLS/CA/CERT/KEY/QOS/RECONNECT_MAX, MAX_QUERY_DAYS, CONTEXT_SECONDS, RETRY_SECONDS. See .env.example.
 
 Policy requires version, approved_by, nonempty unique required_detectors, positive timeout_seconds, rules (each id/detector/match/outcome); alerts_enabled/manual_resolution/resolve_on_normal default false; severity nullable. Rules reference required detectors, use exact, type-sensitive top-level finding-field equality, and outcome anomaly or indeterminate. The engine's fixed conservative fallback behavior and first-result/frozen-decision semantics are part of the reviewed adapter configuration, not claims of operational approval.
+
+## Optional AI/classical extensions
+
+The optional integrated subsystem is documented in ../AI/API_CONTRACT.md and ../AI/WEBSOCKET_CONTRACT.md. Migration 003 adds incident_key to Alert responses (legacy default __machine__) and permits independent parameter incidents. Existing endpoints retain their meaning with features disabled. With classical incidents enabled, acknowledgment stays independent of condition recovery; legacy manual resolution cannot override the new recovery policy.
+
+Run extensions from repository root using backend.app.main:create_app. Use ML_ENABLED/AI_ENABLED and the configuration in ../AI/.env.example. Legacy policy alerts must be disabled while classical parameter incidents own lifecycle management.

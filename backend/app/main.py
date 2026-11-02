@@ -1,4 +1,5 @@
 import hmac
+import asyncio
 import logging
 import threading
 from contextlib import asynccontextmanager
@@ -59,14 +60,49 @@ def create_app(settings=None):
         if settings.policy_file
         else None
     )
+    if (settings.ml_enabled or settings.ai_enabled) and __package__ != "backend.app":
+        raise RuntimeError(
+            "AI/ML extensions require the repository-root entry point: backend.app.main:create_app"
+        )
+    classical = None
+    if settings.ml_enabled or settings.ai_enabled:
+        from ML.runtime import Runtime
+
+        classical = Runtime(settings)
+    if settings.ml_enabled and policy and policy.alerts_enabled:
+        raise RuntimeError(
+            "Disable legacy policy alerts when ML_ENABLED uses parameter-level incident management"
+        )
     stop = threading.Event()
 
     def worker():
-        while not stop.wait(settings.retry_seconds):
+        while not stop.wait(3 if settings.ml_enabled else settings.retry_seconds):
+            if settings.ml_enabled:
+                try:
+                    classical.step(factory, settings.ai_enabled)
+                except Exception:
+                    log.exception(
+                        "Classical ML integration failed; persisted telemetry remains pending"
+                    )
             try:
                 process_pending(factory, policy)
             except Exception:
                 log.exception("Pending processing failed; will retry")
+
+    def ai_worker():
+        while not stop.wait(0.5):
+            try:
+                troubleshooting.process_one(factory)
+            except Exception:
+                log.exception("AI processing failed; persisted messages will retry")
+
+    async def publish_events(loop):
+        while not stop.is_set():
+            try:
+                await asyncio.to_thread(hub.deliver, factory, loop)
+            except Exception:
+                log.exception("Event publication failed; outbox remains pending")
+            await asyncio.sleep(0.5)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -76,9 +112,25 @@ def create_app(settings=None):
             session.execute(text("SELECT 1"))
             seed(session, registry)
             register_policy(session, policy)
+            if settings.ml_enabled:
+                register_policy(
+                    session,
+                    classical.policy.model_copy(
+                        update={"version": "classical:" + classical.policy.version}
+                    ),
+                )
         thread = threading.Thread(target=worker, daemon=True)
         subscriber = Subscriber(settings, factory) if settings.mqtt_enabled else None
+        app.state.mqtt_subscriber = subscriber
         thread.start()
+        ai_thread = None
+        publisher_task = None
+        if settings.ai_enabled:
+            ai_thread = threading.Thread(target=ai_worker, daemon=True)
+            publisher_task = asyncio.create_task(
+                publish_events(asyncio.get_running_loop())
+            )
+            ai_thread.start()
         try:
             if subscriber:
                 subscriber.start()
@@ -89,9 +141,14 @@ def create_app(settings=None):
             yield
         finally:
             stop.set()
+            if publisher_task:
+                publisher_task.cancel()
+                await asyncio.gather(publisher_task, return_exceptions=True)
             if subscriber:
                 subscriber.stop()
             thread.join(timeout=5)
+            if ai_thread:
+                ai_thread.join(timeout=5)
             engine.dispose()
             log.info("Backend stopped")
 
@@ -397,4 +454,25 @@ def create_app(settings=None):
             ),
         }
 
+    if settings.ml_enabled or settings.ai_enabled:
+        from AI.api import install_incidents
+
+        install_incidents(app, factory, reader, operator)
+        app.state.classical = classical
+    if settings.ai_enabled:
+        from AI.api import install
+        from AI.provider import OllamaProvider
+        from AI.service import Troubleshooting
+        from AI.realtime import Hub
+
+        hub = Hub()
+        troubleshooting = Troubleshooting(
+            settings, OllamaProvider(settings), classical.limits
+        )
+        troubleshooting.connection_check = lambda: bool(
+            getattr(app.state, "mqtt_subscriber", None)
+            and app.state.mqtt_subscriber.client.is_connected()
+        )
+        install(app, settings, factory, reader, operator, troubleshooting, hub)
+        app.state.troubleshooting, app.state.hub = troubleshooting, hub
     return app

@@ -1,0 +1,8 @@
+{
+  "version": "prototype-parameter-v1",
+  "correlation_seconds": 120,
+  "recovery_observations": 3,
+  "recovery_seconds": 6,
+  "parameter_groups": {},
+  "max_observation_gap_seconds": 4.5
+}

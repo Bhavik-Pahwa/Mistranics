@@ -14,7 +14,7 @@ class ReadingQuality(str, Enum):
 class SensorReading(BaseModel):
     sensor_id: str
     parameter: str
-    value: Optional[float] = None
+    value: Optional[float] = Field(default=None, strict=True, allow_inf_nan=False)
     unit: str
     quality: ReadingQuality = ReadingQuality.valid
 
@@ -83,7 +83,7 @@ class ValidatedSensorReading(BaseModel):
     parameter: str
     value_original: Optional[float] = None
     unit_original: str
-    value_normalized: Optional[float] = None
+    value_normalized: Optional[float] = Field(default=None, strict=True, allow_inf_nan=False)
     unit_normalized: Optional[str] = None
     quality: ReadingQuality = ReadingQuality.valid
 

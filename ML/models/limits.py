@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class LimitVerificationStatus(str, Enum):
@@ -32,6 +32,7 @@ class SourceReference(BaseModel):
 
 
 class ManufacturerLimitRecord(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
     limit_id: str
     machine_id: str
     machine_model: Optional[str] = None
@@ -55,20 +56,28 @@ class ManufacturerLimitRecord(BaseModel):
     approved_at: Optional[datetime] = None
     config_version: str = "limits-1.0"
 
-    def is_applicable(self, state: Optional[str] = None, mode: Optional[str] = None,
-                      rpm: Optional[float] = None, load: Optional[float] = None) -> bool:
+    def is_applicable(
+        self,
+        state: Optional[str] = None,
+        mode: Optional[str] = None,
+        rpm: Optional[float] = None,
+        load: Optional[float] = None,
+    ) -> bool:
         """Check if operating context satisfies the limit's applicability preconditions."""
-        if self.applicable_state and state and self.applicable_state.lower() != state.lower():
+        if self.applicable_state and (
+            state is None or self.applicable_state.lower() != state.lower()
+        ):
             return False
-        if self.applicable_mode and mode and self.applicable_mode.lower() != mode.lower():
+        if self.applicable_mode and (
+            mode is None or self.applicable_mode.lower() != mode.lower()
+        ):
             return False
-        if self.min_rpm is not None and rpm is not None and rpm < self.min_rpm:
+        if self.min_rpm is not None and (rpm is None or rpm < self.min_rpm):
             return False
-        if self.max_rpm is not None and rpm is not None and rpm > self.max_rpm:
+        if self.max_rpm is not None and (rpm is None or rpm > self.max_rpm):
             return False
-        if self.min_load is not None and load is not None and load < self.min_load:
+        if self.min_load is not None and (load is None or load < self.min_load):
             return False
-        if self.max_load is not None and load is not None and load > self.max_load:
+        if self.max_load is not None and (load is None or load > self.max_load):
             return False
         return True
-

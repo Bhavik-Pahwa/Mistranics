@@ -2,7 +2,12 @@ from datetime import datetime, timezone, timedelta
 import numpy as np
 import pytest
 from ML.models.features import FeatureSnapshot, FEATURE_SCHEMA_VERSION, FEATURE_COLUMNS
-from ML.models.telemetry import ReadingQuality, ValidatedTelemetryRecord, ValidatedSensorReading, OperatingContext
+from ML.models.telemetry import (
+    ReadingQuality,
+    ValidatedTelemetryRecord,
+    ValidatedSensorReading,
+    OperatingContext,
+)
 from ML.models.results import DetectorType, EvaluationStatus
 from ML.detector_b.trainer import IsolationForestTrainer
 from ML.detector_b.inference import IsolationForestInference
@@ -88,20 +93,82 @@ def test_detector_b_end_to_end_evaluation(trained_model):
             measured_at=t,
             window_start=t - timedelta(seconds=3),
             window_end=t,
-            operating_context=OperatingContext(operating_state="running", operating_mode="standard", rpm=1500.0, load_percentage=80.0),
+            operating_context=OperatingContext(
+                operating_state="running",
+                operating_mode="standard",
+                rpm=1500.0,
+                load_percentage=80.0,
+            ),
             readings=[
-                ValidatedSensorReading(sensor_id="temp", parameter="motor_temperature", value_original=50.0, unit_original="degC", value_normalized=50.0, unit_normalized="degC"),
-                ValidatedSensorReading(sensor_id="curr", parameter="mean_current", value_original=12.0, unit_original="A", value_normalized=12.0, unit_normalized="A"),
-                ValidatedSensorReading(sensor_id="vib", parameter="vibration_rms", value_original=1.8, unit_original="mm/s", value_normalized=1.8, unit_normalized="mm/s"),
-                ValidatedSensorReading(sensor_id="press", parameter="mean_pressure", value_original=102.0, unit_original="kPa", value_normalized=102.0, unit_normalized="kPa"),
-                ValidatedSensorReading(sensor_id="out", parameter="mean_output", value_original=22.0, unit_original="kW", value_normalized=22.0, unit_normalized="kW"),
-            ]
+                ValidatedSensorReading(
+                    sensor_id="temp",
+                    parameter="motor_temperature",
+                    value_original=50.0,
+                    unit_original="degC",
+                    value_normalized=50.0,
+                    unit_normalized="degC",
+                ),
+                ValidatedSensorReading(
+                    sensor_id="curr",
+                    parameter="mean_current",
+                    value_original=12.0,
+                    unit_original="A",
+                    value_normalized=12.0,
+                    unit_normalized="A",
+                ),
+                ValidatedSensorReading(
+                    sensor_id="vib",
+                    parameter="vibration_rms",
+                    value_original=1.8,
+                    unit_original="mm/s",
+                    value_normalized=1.8,
+                    unit_normalized="mm/s",
+                ),
+                ValidatedSensorReading(
+                    sensor_id="press",
+                    parameter="mean_pressure",
+                    value_original=102.0,
+                    unit_original="kPa",
+                    value_normalized=102.0,
+                    unit_normalized="kPa",
+                ),
+                ValidatedSensorReading(
+                    sensor_id="out",
+                    parameter="mean_output",
+                    value_original=22.0,
+                    unit_original="kW",
+                    value_normalized=22.0,
+                    unit_normalized="kW",
+                ),
+            ],
         )
         buffer.add(rec)
 
     # Evaluate latest record
     result = detector_b.evaluate(rec, buffer)
-    assert result.status == EvaluationStatus.completed
+    assert result.status == EvaluationStatus.insufficient_data
     assert result.model_version == "test-model-1.0"
     assert result.feature_schema_version == FEATURE_SCHEMA_VERSION
 
+
+def test_nonfinite_estimator_output_preserves_model_provenance(
+    trained_model, monkeypatch
+):
+    monkeypatch.setattr(
+        trained_model.estimator,
+        "score_samples",
+        lambda values: np.array([float("nan")]),
+    )
+    at = datetime.now(timezone.utc)
+    snapshot = FeatureSnapshot(
+        snapshot_id="bad-estimator",
+        machine_id="motor_001",
+        feature_timestamp=at,
+        source_window_start=at,
+        source_window_end=at,
+        features={column: 50.0 for column in FEATURE_COLUMNS},
+    )
+    result = IsolationForestInference(trained_model).score(snapshot)
+    assert result.status == EvaluationStatus.processing_error
+    assert result.model_version == "test-model-1.0"
+    assert result.feature_schema_version == FEATURE_SCHEMA_VERSION

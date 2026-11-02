@@ -40,11 +40,15 @@ class FeatureExtractor:
         # ----------------------------------------------------
         # Category 1: Direct Features (3s Window)
         # ----------------------------------------------------
-        temp_val = self._get_param_val(current_record, ["motor_temperature", "temperature", "bearing_temperature"])
+        temp_val = self._get_param_val(current_record, ["mean_temperature", "motor_temperature", "temperature", "bearing_temperature"])
         if temp_val is not None:
             features["mean_temperature"] = float(temp_val)
-            features["min_temperature"] = float(temp_val)
-            features["max_temperature"] = float(temp_val)
+            features["min_temperature"] = self._get_param_val(current_record, ["min_temperature"]) or 0.0
+            if self._get_param_val(current_record, ["min_temperature"]) is None:
+                missing_features.append("min_temperature")
+            features["max_temperature"] = self._get_param_val(current_record, ["max_temperature"]) or 0.0
+            if self._get_param_val(current_record, ["max_temperature"]) is None:
+                missing_features.append("max_temperature")
         else:
             features["mean_temperature"] = 0.0
             features["min_temperature"] = 0.0
@@ -58,7 +62,7 @@ class FeatureExtractor:
             features["mean_current"] = 0.0
             missing_features.append("mean_current")
 
-        vib_val = self._get_param_val(current_record, ["vibration_rms", "vibration"])
+        vib_val = self._get_param_val(current_record, ["vibration_velocity_rms", "vibration_rms", "vibration"])
         if vib_val is not None:
             features["vibration_rms"] = float(vib_val)
         else:
@@ -69,8 +73,6 @@ class FeatureExtractor:
         peak_rms_val = self._get_param_val(current_record, ["peak_rms"])
         if peak_rms_val is not None:
             features["peak_rms"] = float(peak_rms_val)
-        elif vib_val is not None:
-            features["peak_rms"] = float(vib_val * 1.4142)  # crest-factor estimation
         else:
             features["peak_rms"] = 0.0
             missing_features.append("peak_rms")
@@ -78,8 +80,6 @@ class FeatureExtractor:
         peak_vib_val = self._get_param_val(current_record, ["peak_vibration"])
         if peak_vib_val is not None:
             features["peak_vibration"] = float(peak_vib_val)
-        elif vib_val is not None:
-            features["peak_vibration"] = float(vib_val * 1.4142)
         else:
             features["peak_vibration"] = 0.0
             missing_features.append("peak_vibration")
@@ -108,9 +108,15 @@ class FeatureExtractor:
             current_record.machine_id, seconds=60.0, as_of=current_record.measured_at
         )
 
+        for duration, history in [(15, history_15s), (60, history_60s)]:
+            if not history or (current_record.measured_at - history[0].measured_at).total_seconds() < duration:
+                insufficient_history.append(f"coverage_{duration}s")
+            if any((b.measured_at-a.measured_at).total_seconds() > 3.1 for a,b in zip(history, history[1:])):
+                insufficient_history.append(f"gaps_{duration}s")
+
         # 15s Temperature delta
         if len(history_15s) >= 2 and temp_val is not None:
-            oldest_temp = self._get_param_val(history_15s[0], ["motor_temperature", "temperature", "bearing_temperature"])
+            oldest_temp = self._get_param_val(history_15s[0], ["mean_temperature", "motor_temperature", "temperature", "bearing_temperature"])
             features["temperature_change_15s"] = float(temp_val - oldest_temp) if oldest_temp is not None else 0.0
         else:
             features["temperature_change_15s"] = 0.0
@@ -119,7 +125,7 @@ class FeatureExtractor:
 
         # 60s Temperature delta
         if len(history_60s) >= 2 and temp_val is not None:
-            oldest_temp_60 = self._get_param_val(history_60s[0], ["motor_temperature", "temperature", "bearing_temperature"])
+            oldest_temp_60 = self._get_param_val(history_60s[0], ["mean_temperature", "motor_temperature", "temperature", "bearing_temperature"])
             features["temperature_change_60s"] = float(temp_val - oldest_temp_60) if oldest_temp_60 is not None else 0.0
         else:
             features["temperature_change_60s"] = 0.0
@@ -128,16 +134,16 @@ class FeatureExtractor:
 
         # Rolling vibration average (15s & 60s)
         vibs_15s = [
-            self._get_param_val(r, ["vibration_rms", "vibration"])
+            self._get_param_val(r, ["vibration_velocity_rms", "vibration_rms", "vibration"])
             for r in history_15s
-            if self._get_param_val(r, ["vibration_rms", "vibration"]) is not None
+            if self._get_param_val(r, ["vibration_velocity_rms", "vibration_rms", "vibration"]) is not None
         ]
         features["rolling_vibration_average_15s"] = float(np.mean(vibs_15s)) if vibs_15s else float(features["vibration_rms"])
 
         vibs_60s = [
-            self._get_param_val(r, ["vibration_rms", "vibration"])
+            self._get_param_val(r, ["vibration_velocity_rms", "vibration_rms", "vibration"])
             for r in history_60s
-            if self._get_param_val(r, ["vibration_rms", "vibration"]) is not None
+            if self._get_param_val(r, ["vibration_velocity_rms", "vibration_rms", "vibration"]) is not None
         ]
         features["rolling_vibration_average_60s"] = float(np.mean(vibs_60s)) if vibs_60s else float(features["vibration_rms"])
 

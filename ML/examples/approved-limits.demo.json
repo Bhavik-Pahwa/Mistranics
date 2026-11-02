@@ -1,0 +1,15 @@
+[
+  {
+    "limit_id":"DEMO-ONLY-temperature",
+    "machine_id":"motor_001",
+    "parameter":"motor_temperature",
+    "upper_limit":75.0,
+    "unit":"degC",
+    "category":"warning",
+    "status":"approved",
+    "reviewer":"SYNTHETIC-TEST-FIXTURE-NOT-MANUFACTURER-APPROVAL",
+    "approved_at":"2026-11-02T00:00:00Z",
+    "config_version":"demo-limits-v1",
+    "source":{"document":"SYNTHETIC DEMO ONLY; not an actual manufacturer manual","revision":"test"}
+  }
+]

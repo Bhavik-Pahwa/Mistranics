@@ -1,8 +1,8 @@
 # INDUX Machine Health Engine (ML & Detectors)
 
-Standalone Machine Learning & Detector package for the INDUX platform.
+Classical Machine Learning & Detector package for the INDUX platform, with an optional adapter to the existing backend.
 
-This package implements **Shared Telemetry Preparation**, **Detector A** (Manufacturer Limits & Statistical Rules Engine), and **Detector B** (Feature Engineering & Isolation Forest Engine), adhering strictly to the PRD without touching or depending on the backend codebase.
+This package implements **Shared Telemetry Preparation**, **Detector A** (Manufacturer Limits & Statistical Rules Engine), and **Detector B** (Feature Engineering & Isolation Forest Engine), with standalone algorithms and an optional backend integration in runtime.py and persistence.py. See IMPLEMENTATION.md for audited corrections and integration behavior.
 
 ## Directory Layout
 
@@ -28,7 +28,7 @@ ML/
 │   └── engine.py               # Unified Detector B runner
 ├── contracts/
 │   └── DETECTOR_CONTRACT.md    # Integration contract for Decision Layer and Backend API
-├── tests/                      # Pytest suite with 100% test coverage
+├── tests/                      # Detector and regression test suite
 │   ├── test_models.py
 │   ├── test_shared_prep.py
 │   ├── test_detector_a_limits.py
@@ -75,3 +75,9 @@ Simulates 10 steps of 3-second telemetry windows through the entire pipeline:
 - Steps 1-7: normal telemetry stream (both detectors report 0 violations).
 - Steps 8-10: injected thermal and electrical anomaly, triggering Detector A manufacturer limit crossing, statistical persistence deviation, and Detector B multivariate isolation forest anomaly.
 
+
+## Backend integration update
+
+Existing algorithms and artifacts were retained. Missing/inapplicable limits now report unavailable evaluation, unit mismatches are rejected, detector failures are isolated, and inference refuses incomplete/fabricated feature rows. Mean-only telemetry does not establish real extrema or vibration peaks. The existing fixed 22-column schema and 60-second context remain alongside the required 3/15-second windows.
+
+For integrated execution, configuration and incident APIs see [INTEGRATION_CONTRACT.md](INTEGRATION_CONTRACT.md), [IMPLEMENTATION.md](IMPLEMENTATION.md), and [../AI/README.md](../AI/README.md). Earlier simulation descriptions assume complete sensor features; sparse simulations now correctly return insufficient_data for Detector B.

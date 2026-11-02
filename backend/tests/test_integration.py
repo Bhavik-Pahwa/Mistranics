@@ -34,7 +34,7 @@ def test_versioned_migrations(app):
     migrate(app.state.engine)
     assert set(Base.metadata.tables) <= set(inspect(app.state.engine).get_table_names())
     with app.state.engine.begin() as conn:
-        assert conn.scalar(text("SELECT count(*) FROM schema_migrations")) == 2
+        assert conn.scalar(text("SELECT count(*) FROM schema_migrations")) == 4
 
 
 def test_real_mqtt_to_alert(app, client, telemetry):

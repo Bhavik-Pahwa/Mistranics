@@ -1,6 +1,6 @@
 import os
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, MetaData
 from app.config import Settings
 from app.db import Base
 from app.main import create_app
@@ -30,12 +30,16 @@ def app(tmp_path):
         def foreign_keys(connection, record):
             connection.execute("PRAGMA foreign_keys=ON")
 
-    Base.metadata.drop_all(engine)
+    reflected = MetaData()
+    reflected.reflect(bind=engine)
+    reflected.drop_all(engine)
     Base.metadata.create_all(engine)
     with app.state.factory.begin() as session:
         seed(session, load_registry(settings.registry_file))
     yield app
-    Base.metadata.drop_all(engine)
+    reflected = MetaData()
+    reflected.reflect(bind=engine)
+    reflected.drop_all(engine)
     engine.dispose()
 
 
