@@ -167,13 +167,14 @@ export const App: React.FC = () => {
       />
 
       {/* Main Full-Height Workspace (Strict 100vh Single Sight) */}
-      <main className="flex-1 min-h-0 p-3 sm:p-4 overflow-hidden flex flex-col">
+      <main className="flex-1 min-h-0 p-3 sm:p-4 overflow-y-auto lg:overflow-hidden flex flex-col">
         {/* Floating Spotlight Search Bar on top */}
         <FloatingSearchBar
           onOpenSearch={() => setIsSearchOpen(true)}
           totalMachines={machines.length}
           activeAlertsCount={activeAlertsCount}
         />
+        {activeNav === 'dashboard' && <p className="shrink-0 px-1 py-1 text-[10px] text-slate-500">Live temperature is connected separately. Machine overview, alerts and demo trends below use prototype sample data.</p>}
 
         {/* View Switcher: Dashboard View vs Chatbot View */}
         {activeNav === 'chatbot' ? (
@@ -186,11 +187,11 @@ export const App: React.FC = () => {
           </div>
         ) : (
           /* Operational Dashboard Layout */
-          <div className="flex flex-col lg:flex-row gap-3 sm:gap-4 flex-1 min-h-0 h-full pt-1">
+          <div className="flex flex-col lg:flex-row gap-3 sm:gap-4 shrink-0 lg:flex-1 lg:min-h-0 lg:h-full pt-1">
             {/* Left Column (60% width): Sensor Trends (50%) + Priority Machines (50%) */}
-            <div className="flex flex-col gap-3 sm:gap-4 w-full lg:w-[60%] h-full min-h-0">
+            <div className="flex flex-col gap-3 sm:gap-4 w-full lg:w-[60%] lg:h-full min-h-0">
               {/* Part 1: Upper-left (50% height) */}
-              <div className="flex-1 min-h-0 h-1/2">
+              <div className="h-[480px] shrink-0 lg:flex-1 min-h-0 lg:h-1/2">
                 <Part1SensorTrends
                   machines={machines}
                   selectedMachineIndex={selectedMachineIndex}
@@ -203,7 +204,7 @@ export const App: React.FC = () => {
               </div>
 
               {/* Part 3: Lower-left (50% height) */}
-              <div className="flex-1 min-h-0 h-1/2">
+              <div className="h-[320px] shrink-0 lg:flex-1 min-h-0 lg:h-1/2">
                 <Part3MachineOverview
                   machines={machines}
                   onOpenMachineAnalytics={(machine) =>
@@ -214,7 +215,7 @@ export const App: React.FC = () => {
             </div>
 
             {/* Right Column (40% width): Full-Height Active Alerts & Triage */}
-            <div className="w-full lg:w-[40%] h-full min-h-0">
+            <div className="w-full lg:w-[40%] h-[480px] lg:h-full min-h-0">
               <Part4ActiveAlerts
                 alerts={alerts}
                 onResolveAlert={handleResolveAlert}

@@ -10,6 +10,7 @@ from ML.models.limits import ManufacturerLimitRecord, LimitVerificationStatus, L
 from ML.detector_a.statistical_engine import StatisticalRuleConfig
 from ML.detector_b.trainer import IsolationForestTrainer, load_model_package
 from ML.pipeline import MachineHealthPipeline
+from ML.simulation import motor_temperature
 
 
 def generate_synthetic_healthy_dataset(n_samples: int = 300) -> np.ndarray:
@@ -100,7 +101,7 @@ def handle_simulate(args):
         t = t0 + timedelta(seconds=step * 3)
         is_anomaly_step = args.with_anomaly and step >= (args.steps - 3)
 
-        temp = 82.0 if is_anomaly_step else 52.0
+        temp = motor_temperature(step, args.steps, args.with_anomaly)
         curr = 28.0 if is_anomaly_step else 11.5
         vib = 5.5 if is_anomaly_step else 1.6
 

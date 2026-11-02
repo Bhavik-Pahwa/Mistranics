@@ -24,6 +24,17 @@ class Settings(BaseSettings):
     mqtt_key: str | None = None
     mqtt_qos: Literal[0, 1] = 1
     mqtt_reconnect_max: int = Field(30, ge=1)
+    # Opt-in evaluation mode; legacy database/AI/ML application remains available.
+    iot_enabled: bool = False
+    iot_topic: str = "indux/device-01/telemetry"
+    iot_source: Literal["physical", "simulation"] = "physical"
+    iot_physical_device: str = "device-01"
+    iot_simulation_device: str = "simulation-01"
+    anomaly_z_threshold: float = Field(3.0, gt=0, allow_inf_nan=False)
+    anomaly_baseline_size: int = Field(20, ge=5, le=1000)
+    anomaly_min_baseline_samples: int = Field(5, ge=2, le=1000)
+    anomaly_std_floor: float = Field(0.1, gt=0, allow_inf_nan=False)
+    telemetry_stale_after_seconds: float = Field(10, ge=3, le=300)
     registry_file: str = "examples/registry.json"
     policy_file: str | None = None
     max_query_days: int = Field(31, ge=1)

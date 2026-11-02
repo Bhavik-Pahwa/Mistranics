@@ -53,6 +53,10 @@ def serialize(row):
 
 def create_app(settings=None):
     settings = settings or Settings()
+    if settings.iot_enabled:
+        from .telemetry import create_iot_app
+
+        return create_iot_app(settings)
     engine, factory = connect(settings.database_url)
     registry = load_registry(settings.registry_file)
     policy = (

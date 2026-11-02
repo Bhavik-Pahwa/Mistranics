@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ESP32 + MPU6050 Motor Simulator</title>
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--tx:#1b1f24;--mu:#5b6573;--bd:#d9dee6;--ac:#2563eb;--ok:#15803d;--wn:#b45309;--er:#b91c1c;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1318;--card:#171c23;--tx:#e6e9ee;--mu:#9aa4b2;--bd:#2a313b;--ac:#60a5fa;--ok:#4ade80;--wn:#fbbf24;--er:#f87171;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1318;--card:#171c23;--tx:#e6e9ee;--mu:#9aa4b2;--bd:#2a313b;--ac:#60a5fa;--ok:#4ade80;--wn:#fbbf24;--er:#f87171;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;padding:14px;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+h1{font-size:19px;margin:0 0 2px}.sub{margin:0 0 12px;color:var(--mu)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:12px}
+.kpi{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:8px 12px}
+.kpi span{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--mu)}
+.kpi b{font-size:22px;font-variant-numeric:tabular-nums}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;min-width:0}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--mu);margin:0 0 8px}
+svg{display:block;width:100%}
+.chart{height:150px;background:transparent}
+.btns{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
+button{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:7px 11px;cursor:pointer}
+button.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.row{display:flex;justify-content:space-between;color:var(--mu);margin-top:6px}
+input[type=range]{width:100%;margin:4px 0 6px}
+.desc{margin:10px 0 0;color:var(--mu);font-size:13px}
+.lg{font-size:12px;color:var(--mu);margin-top:4px}.lg i{display:inline-block;width:12px;height:3px;margin:0 4px 3px 10px;vertical-align:middle}
+#term{margin:0;background:#0d1117;color:#7ee787;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace;height:200px;overflow:auto;border-radius:8px;padding:8px;white-space:pre}
+details{margin-top:12px}summary{cursor:pointer;color:var(--ac);font-weight:600}
+pre.code{background:#0d1117;color:#d0d7de;padding:10px;border-radius:8px;overflow-x:auto;font:12px/1.45 ui-monospace,Menlo,Consolas,monospace}
+.tx{fill:var(--tx);font:12px system-ui,sans-serif}.mu{fill:var(--mu);font:11px system-ui,sans-serif}
+.g{stroke:var(--bd);stroke-width:1;vector-effect:non-scaling-stroke}
+.ln{fill:none;stroke-width:1.5;vector-effect:non-scaling-stroke;stroke-linejoin:round}
+</style></head><body>
+<h1>ESP32 / Nano ESP32 + MPU6050 motor simulator</h1>
+<p class="sub">A virtual motor with an MPU6050 on its casing. Choose an anomaly and watch the sensor data, detector and serial output react.</p>
+
+<div class="kpis">
+<div class="kpi"><span>Status</span><b id="state">NORMAL</b></div>
+<div class="kpi"><span>Vibration RMS</span><b id="rms">0.00 g</b></div>
+<div class="kpi"><span>Temperature</span><b id="tmp">0.0 °C</b></div>
+<div class="kpi"><span>Speed</span><b id="spd">0 RPM</b></div>
+</div>
+
+<div class="grid">
+<div class="card"><h2>Motor and sensor</h2>
+<svg viewBox="0 0 520 240" role="img" aria-label="Motor with MPU6050 sensor wired to ESP32">
+<rect x="30" y="196" width="320" height="12" rx="3" fill="#475569"/>
+<g id="cas">
+<rect id="body" x="50" y="90" width="260" height="106" rx="10" fill="#475569"/>
+<g stroke="#000" stroke-opacity=".2" stroke-width="5"><line x1="80" y1="92" x2="80" y2="194"/><line x1="115" y1="92" x2="115" y2="194"/><line x1="150" y1="92" x2="150" y2="194"/><line x1="185" y1="92" x2="185" y2="194"/><line x1="220" y1="92" x2="220" y2="194"/><line x1="255" y1="92" x2="255" y2="194"/></g>
+<rect x="36" y="108" width="14" height="70" fill="#334155"/>
+<rect x="310" y="138" width="80" height="10" fill="#94a3b8"/>
+<g id="rot"><circle cx="390" cy="143" r="36" fill="#94a3b8" stroke="#64748b" stroke-width="3"/><line x1="354" y1="143" x2="426" y2="143" stroke="#64748b" stroke-width="3"/><line x1="390" y1="107" x2="390" y2="179" stroke="#64748b" stroke-width="3"/><circle cx="412" cy="143" r="8" fill="#e11d48"/><circle cx="390" cy="143" r="5" fill="#334155"/></g>
+<rect x="150" y="68" width="70" height="22" rx="3" fill="#0d9488"/><text x="158" y="83" font-size="11" fill="#fff" font-family="system-ui,sans-serif">MPU6050</text>
+</g>
+<path d="M185 68 C185 30 290 60 340 44" fill="none" stroke="#f59e0b" stroke-width="2"/>
+<rect x="340" y="14" width="170" height="58" rx="6" fill="#1e293b"/>
+<text x="350" y="34" font-size="12" fill="#e2e8f0" font-family="system-ui,sans-serif">ESP32 / Nano ESP32</text>
+<text x="350" y="52" font-size="10" fill="#94a3b8" font-family="system-ui,sans-serif">I2C: SDA, SCL, 3V3, GND</text>
+<circle id="led" cx="490" cy="30" r="7" fill="#22c55e"/>
+<text class="mu" x="330" y="228">Rotor is drawn 10× slower than real speed so you can see it</text>
+</svg>
+<p class="desc" id="desc"></p></div>
+
+<div class="card"><h2>Controls</h2>
+<div class="btns" id="modes"></div>
+<div class="row"><span>Motor speed</span><span id="rv">1500 RPM</span></div>
+<input type="range" id="rpm" min="0" max="3000" step="50" value="1500">
+<div class="row"><span>Anomaly severity</span><span id="sv">60%</span></div>
+<input type="range" id="sev" min="0" max="100" step="1" value="60">
+<div class="btns" style="margin-top:10px"><button id="rst">Cool down to 28 °C</button><button id="pause">Pause</button></div>
+<p class="desc">Detector: WARNING above 0.15 g RMS or 60 °C, FAULT above 0.35 g RMS or 75 °C. Heating takes ~30 to 60 seconds to show.</p></div>
+
+<div class="card"><h2>Accelerometer (g), 1 kHz, last 0.4 s</h2>
+<svg id="ca" class="chart" viewBox="0 0 400 150" preserveAspectRatio="none">
+<line class="g" x1="0" y1="37.5" x2="400" y2="37.5"/><line class="g" x1="0" y1="75" x2="400" y2="75"/><line class="g" x1="0" y1="112.5" x2="400" y2="112.5"/>
+<polyline id="pax" class="ln" stroke="#ef4444" points=""/><polyline id="pay" class="ln" stroke="#22c55e" points=""/><polyline id="paz" class="ln" stroke="#3b82f6" points=""/></svg>
+<div class="lg">Range −3 to +4 g<i style="background:#ef4444"></i>X<i style="background:#22c55e"></i>Y<i style="background:#3b82f6"></i>Z</div></div>
+
+<div class="card"><h2>Gyroscope (°/s)</h2>
+<svg id="cg" class="chart" viewBox="0 0 400 150" preserveAspectRatio="none">
+<line class="g" x1="0" y1="37.5" x2="400" y2="37.5"/><line class="g" x1="0" y1="75" x2="400" y2="75"/><line class="g" x1="0" y1="112.5" x2="400" y2="112.5"/>
+<polyline id="pgx" class="ln" stroke="#ef4444" points=""/><polyline id="pgy" class="ln" stroke="#22c55e" points=""/><polyline id="pgz" class="ln" stroke="#3b82f6" points=""/></svg>
+<div class="lg">Range ±100 °/s<i style="background:#ef4444"></i>X<i style="background:#22c55e"></i>Y<i style="background:#3b82f6"></i>Z</div></div>
+
+<div class="card"><h2>Temperature (°C), last 60 s</h2>
+<svg id="ct" class="chart" viewBox="0 0 400 150" preserveAspectRatio="none">
+<line class="g" x1="0" y1="75" x2="400" y2="75"/>
+<line x1="0" y1="75" x2="400" y2="75" stroke="#f59e0b" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>
+<line x1="0" y1="37.5" x2="400" y2="37.5" stroke="#ef4444" stroke-dasharray="6 4" vector-effect="non-scaling-stroke"/>
+<polyline id="pt" class="ln" stroke="#f59e0b" points=""/></svg>
+<div class="lg">Range 20 to 100 °C. Dashed lines: warning 60 °C, fault 75 °C</div></div>
+
+<div class="card"><h2>Serial monitor (115200 baud)</h2><pre id="term"></pre></div>
+</div>
+
+<details class="card"><summary>Arduino code for the real Nano ESP32 / ESP32</summary>
+<pre class="code">#include &lt;Wire.h&gt;
+#include &lt;Adafruit_MPU6050.h&gt;
+#include &lt;Adafruit_Sensor.h&gt;
+
+Adafruit_MPU6050 mpu;
+const float WARN_G = 0.15, FAULT_G = 0.35, WARN_T = 60, FAULT_T = 75;
+const int N = 200;
+float bx[N], by[N], bz[N];
+int idx = 0;
+unsigned long lastPrint = 0;
+
+float rmsOf(float *b) {
+  float m = 0; for (int i = 0; i &lt; N; i++) m += b[i]; m /= N;
+  float s = 0; for (int i = 0; i &lt; N; i++) s += (b[i] - m) * (b[i] - m);
+  return s / N;                         // variance
+}
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin();                         // Nano ESP32: A4 = SDA, A5 = SCL
+  if (!mpu.begin()) { Serial.println("MPU6050 not found"); while (1) delay(10); }
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_260_HZ);
+}
+
+void loop() {
+  sensors_event_t a, g, t;
+  mpu.getEvent(&amp;a, &amp;g, &amp;t);
+  bx[idx] = a.acceleration.x / 9.80665;
+  by[idx] = a.acceleration.y / 9.80665;
+  bz[idx] = a.acceleration.z / 9.80665;
+  idx = (idx + 1) % N;
+
+  if (millis() - lastPrint &gt; 3000) {   // print every 3000 ms
+    lastPrint = millis();
+    float rms = sqrt(rmsOf(bx) + rmsOf(by) + rmsOf(bz));
+    const char *st = (rms &gt; FAULT_G || t.temperature &gt; FAULT_T) ? "FAULT"
+                   : (rms &gt; WARN_G  || t.temperature &gt; WARN_T)  ? "WARNING" : "NORMAL";
+    Serial.printf("ax=%.2f ay=%.2f az=%.2f gz=%.1f T=%.1f rms=%.3f %s\n",
+      bx[(idx + N - 1) % N], by[(idx + N - 1) % N], bz[(idx + N - 1) % N],
+      g.gyro.z * 57.2958, t.temperature, rms, st);
+  }
+  delay(3000);                             // one reading every 3 seconds
+}</pre></details>
+
+<script>
+"use strict";
+var $=function(id){return document.getElementById(id)};
+var N=400, KEYS=['ax','ay','az','gx','gy','gz'], buf={};
+KEYS.forEach(function(k){buf[k]=new Array(N).fill(k==='az'?1:0)});
+var MODES={
+ normal:['Normal','Healthy motor: only small residual vibration at the shaft frequency.'],
+ imb:['Imbalance','Heavy spot on the rotor: strong vibration once per revolution (1x), mostly X and Y, grows with speed squared.'],
+ mis:['Misalignment','Shaft or coupling offset: dominant 2x harmonic, extra Z vibration, some heating.'],
+ brg:['Bearing fault','Sharp periodic impulses that ring down, at the bearing defect frequency, plus friction heating.'],
+ loose:['Loose mount','Random knocks plus a 0.5x sub-harmonic rattle.'],
+ heat:['Overheating','Cooling or winding fault: temperature climbs far past the safe limit.']};
+var EXTRA={normal:0,imb:6,mis:10,brg:25,loose:3,heat:45};
+var S={rpm:1500,sev:60,mode:'normal',T:28,ph:0,bp:0,imp:0,impT:0,paused:false,acc:0,rms:0,vis:0,ser:0,hist:0};
+var TH=[], lines=[];
+function noise(sd){return (Math.random()+Math.random()+Math.random()-1.5)*2*sd}
+function push(k,v){var a=buf[k];a.push(v);a.shift()}
+function sample(){
+ var dt=0.001,f=S.rpm/60,sv=S.sev/100,k=Math.pow(S.rpm/1500,2),m=S.mode,run=S.rpm>0;
+ S.ph+=2*Math.PI*f*dt;
+ var vx=0,vy=0,vz=0;
+ if(run){
+  vx+=0.025*k*Math.sin(S.ph); vy+=0.02*k*Math.cos(S.ph);
+  if(m==='imb'){vx+=0.45*sv*k*Math.sin(S.ph); vy+=0.45*sv*k*Math.cos(S.ph);}
+  else if(m==='mis'){vx+=0.3*sv*k*Math.sin(2*S.ph); vy+=0.12*sv*k*Math.sin(S.ph+1); vz+=0.3*sv*k*Math.sin(2*S.ph+1);}
+  else if(m==='brg'){
+   S.bp+=3.57*f*dt;
+   if(S.bp>=1){S.bp-=1; S.imp=1.1*sv*(0.8+Math.random()*0.4); S.impT=0;}
+   var e=S.imp*Math.exp(-S.impT/0.004)*Math.cos(2*Math.PI*190*S.impT); S.impT+=dt;
+   vx+=e; vy+=e*0.5; vz+=e*0.8;}
+  else if(m==='loose'){
+   if(Math.random()<0.025*sv){S.imp=(0.6+Math.random()*1.6)*sv; S.impT=0;}
+   var e2=S.imp*Math.exp(-S.impT/0.006)*Math.cos(2*Math.PI*160*S.impT); S.impT+=dt;
+   vx+=e2+0.15*sv*k*Math.sin(S.ph/2); vz+=e2*0.7;}
+  else if(m==='heat'){vx+=0.04*sv*Math.sin(S.ph);}
+ }
+ push('ax',vx+noise(0.012)); push('ay',vy+noise(0.012)); push('az',1+vz+noise(0.012));
+ push('gx',vy*70+noise(0.6)); push('gy',-vx*70+noise(0.6)); push('gz',vx*25+noise(0.6));
+}
+function rmsG(){
+ var s=0,j,i,a,mean,d;
+ for(j=0;j<3;j++){a=buf[KEYS[j]];mean=0;
+  for(i=N-200;i<N;i++)mean+=a[i]; mean/=200;
+  for(i=N-200;i<N;i++){d=a[i]-mean; s+=d*d;}}
+ return Math.sqrt(s/200);
+}
+function stateOf(r,T){return (r>0.35||T>75)?'FAULT':(r>0.15||T>60)?'WARNING':'NORMAL'}
+function pts(a,lo,hi){
+ var out=new Array(a.length),i,v,y;
+ for(i=0;i<a.length;i++){v=a[i]; if(v<lo)v=lo; if(v>hi)v=hi;
+  y=150-(v-lo)/(hi-lo)*150; out[i]=(i*400/(a.length-1)).toFixed(1)+','+y.toFixed(1);}
+ return out.join(' ');
+}
+var COL={NORMAL:'#22c55e',WARNING:'#f59e0b',FAULT:'#ef4444'};
+function render(dt){
+ var st=stateOf(S.rms,S.T);
+ var el=$('state'); el.textContent=st; el.style.color='var(--'+(st==='NORMAL'?'ok':st==='WARNING'?'wn':'er')+')';
+ $('rms').textContent=S.rms.toFixed(2)+' g';
+ $('tmp').textContent=S.T.toFixed(1)+' °C';
+ $('spd').textContent=S.rpm+' RPM';
+ $('led').setAttribute('fill',COL[st]);
+ $('pax').setAttribute('points',pts(buf.ax,-3,4)); $('pay').setAttribute('points',pts(buf.ay,-3,4)); $('paz').setAttribute('points',pts(buf.az,-3,4));
+ $('pgx').setAttribute('points',pts(buf.gx,-100,100)); $('pgy').setAttribute('points',pts(buf.gy,-100,100)); $('pgz').setAttribute('points',pts(buf.gz,-100,100));
+ $('pt').setAttribute('points',pts(TH.length>1?TH:[S.T,S.T],20,100));
+ var sh=Math.min(8,S.rms*12);
+ $('cas').setAttribute('transform','translate('+((Math.random()-0.5)*sh).toFixed(2)+','+((Math.random()-0.5)*sh).toFixed(2)+')');
+ S.vis+=2*Math.PI*(S.rpm/60)*dt*0.1;
+ $('rot').setAttribute('transform','rotate('+((S.vis*180/Math.PI)%360).toFixed(1)+' 390 143)');
+ var t=Math.max(0,Math.min(1,(S.T-30)/50));
+ $('body').setAttribute('fill','rgb('+Math.round(71+t*170)+','+Math.round(85-t*40)+','+Math.round(105-t*70)+')');
+}
+function serial(){
+ var st=stateOf(S.rms,S.T);
+ lines.push('ax='+buf.ax[N-1].toFixed(2)+' ay='+buf.ay[N-1].toFixed(2)+' az='+buf.az[N-1].toFixed(2)+' gz='+buf.gz[N-1].toFixed(1)+' T='+(S.T+noise(0.05)).toFixed(1)+' rms='+S.rms.toFixed(3)+' '+st);
+ if(lines.length>40)lines.shift();
+ var t=$('term'); t.textContent=lines.join('\n'); t.scrollTop=t.scrollHeight;
+}
+function setMode(k){S.mode=k;S.imp=0;S.impT=0;S.bp=0;
+ var bs=$('modes').children,i; for(i=0;i<bs.length;i++)bs[i].classList.toggle('on',bs[i].getAttribute('data-k')===k);
+ $('desc').textContent=MODES[k][1];}
+Object.keys(MODES).forEach(function(k){var b=document.createElement('button');b.type='button';b.textContent=MODES[k][0];b.setAttribute('data-k',k);b.onclick=function(){setMode(k)};$('modes').appendChild(b)});
+$('rpm').oninput=function(e){S.rpm=+e.target.value;$('rv').textContent=S.rpm+' RPM'};
+$('sev').oninput=function(e){S.sev=+e.target.value;$('sv').textContent=S.sev+'%'};
+$('rst').onclick=function(){S.T=28};
+$('pause').onclick=function(e){S.paused=!S.paused;e.target.textContent=S.paused?'Resume':'Pause'};
+function step(dt){
+ S.acc+=dt*1000; while(S.acc>=1){sample();S.acc-=1;}
+ var target=26+22*(S.rpm/3000)+(S.rpm>0||S.mode==='heat'?EXTRA[S.mode]*S.sev/100:0);
+ S.T+=(target-S.T)*dt/12;
+ S.rms=S.rms*0.85+rmsG()*0.15;
+ S.ser+=dt; S.hist+=dt;
+ if(S.hist>=0.5){S.hist=0;TH.push(S.T);if(TH.length>120)TH.shift();}
+ if(S.ser>=3){S.ser=0;serial();}
+}
+var last=performance.now();
+function loop(now){
+ requestAnimationFrame(loop);
+ var dt=Math.min(0.05,Math.max(0,(now-last)/1000)); last=now;
+ if(!S.paused)step(dt);
+ render(S.paused?0:dt);
+}
+setMode('normal');
+lines.push('MPU6050 init OK, range 8G / 500dps');
+render(0);
+requestAnimationFrame(loop);
+</script></body></html>
