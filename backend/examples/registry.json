@@ -1,0 +1,11 @@
+[
+  {
+    "asset_id": "motor_001",
+    "name": "Demo motor (illustrative configuration)",
+    "devices": ["esp32_001"],
+    "sensors": [
+      {"sensor_id":"temp_01","parameter":"motor_temperature","units":{"degC":{"canonical_unit":"degC","scale":1,"offset":0}}},
+      {"sensor_id":"vib_01","parameter":"vibration_velocity_rms","units":{"mm/s":{"canonical_unit":"mm/s","scale":1,"offset":0}}}
+    ]
+  }
+]

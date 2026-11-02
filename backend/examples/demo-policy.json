@@ -1,0 +1,13 @@
+{
+  "version":"demo-only-v1",
+  "approved_by":"TEST-FIXTURE-NOT-OPERATIONAL-APPROVAL",
+  "required_detectors":["manufacturer_limits","statistical","isolation_forest"],
+  "timeout_seconds":30,
+  "rules":[
+    {"id":"demo-verified-critical","detector":"manufacturer_limits","match":{"kind":"machine_condition","verified":true,"limit_category":"critical"},"outcome":"anomaly"}
+  ],
+  "alerts_enabled":true,
+  "manual_resolution":true,
+  "resolve_on_normal":false,
+  "severity":null
+}
