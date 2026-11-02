@@ -1,0 +1,8 @@
+{
+  "schema_version":"1.0",
+  "machine_id":"motor_001",
+  "device_id":"esp32_001",
+  "reading_id":"demo-window-001",
+  "measured_at":"2026-11-02T09:10:03Z",
+  "readings":[{"sensor_id":"temp_01","parameter":"motor_temperature","value":56.4,"unit":"degC"}]
+}
