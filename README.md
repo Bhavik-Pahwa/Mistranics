@@ -6,10 +6,10 @@ Mistranics is an industrial IoT and predictive maintenance platform featuring re
 
 ## Quickstart with Docker Compose
 
-To build and run all services in containers, simply execute:
+With Docker Desktop (or another Docker Engine) running, build and run all services:
 
 ```bash
-docker compose up
+docker compose up --build
 ```
 
 *(Add `-d` to run in the background: `docker compose up -d`)*
@@ -97,4 +97,3 @@ When deploying with a physical ESP32 or DS18B20 sensor:
      - "/dev/ttyUSB0:/dev/ttyUSB0"
    ```
    The bridge will automatically detect and stream from the physical sensor.
-

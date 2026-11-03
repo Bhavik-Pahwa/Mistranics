@@ -26,11 +26,11 @@ API_TOKEN protects read routes when configured. INTERNAL_TOKEN and OPERATOR_TOKE
 cd backend
 cp .env.example .env
 # Set secrets, MQTT_HOST to your externally reachable broker hostname,
-# and add POSTGRES_PASSWORD (URL-safe characters) to .env.
+# and replace POSTGRES_PASSWORD with a URL-safe secret.
 docker compose up --build
 ```
 
-Compose supplies PostgreSQL 17 and runs migrations automatically. It does not start a broker. The API binds to localhost; the database is not published. Inside a container, localhost refers to that container. Docker Compose was not available in the implementation environment; the Python service, PostgreSQL migrations, and MQTT flow were validated directly instead.
+Compose builds from the repository root, supplies PostgreSQL 17, and applies migrations before starting the API. It does not start a broker. The API binds to localhost; the database is not published. Inside a container, localhost refers to that container.
 
 ## Policy and integration status
 
