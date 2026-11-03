@@ -10,7 +10,12 @@ from sklearn.ensemble import IsolationForest
 
 from ML.models.features import FEATURE_COLUMNS, FEATURE_SCHEMA_VERSION
 
-ALLOWED_FEATURE_SCHEMAS = {FEATURE_SCHEMA_VERSION, "physical-features-12", "simulator-features-36"}
+ALLOWED_FEATURE_SCHEMAS = {
+    FEATURE_SCHEMA_VERSION,
+    "physical-features-12",
+    "simulator-features-36",
+    "simulator-temp-features-12",
+}
 
 
 class ModelMetadata(BaseModel):

@@ -3,8 +3,9 @@ import numpy as np
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any
 
-from ML.models.detector_b_schemas import SIMULATOR_FEATURE_COLUMNS, DetectorBStatus
+from ML.models.detector_b_schemas import SIMULATOR_FEATURE_COLUMNS, PHYSICAL_FEATURE_COLUMNS, DetectorBStatus
 from ML.detector_b.features_simulator import SimulatorFeatureExtractor, SimulatorTelemetryPoint
+from ML.detector_b.features_physical import PhysicalFeatureExtractor, PhysicalTelemetryPoint
 from ML.detector_b.data_physical import DatasetContainer
 
 
@@ -92,3 +93,85 @@ def generate_simulator_dataset(n_steps: int = 250, seed: int = 42) -> DatasetCon
         metadata={"feature_columns": list(SIMULATOR_FEATURE_COLUMNS), "data_source": "simulator"},
     )
 
+
+
+def generate_simulator_temperature_dataset(n_steps: int = 400, seed: int = 42) -> DatasetContainer:
+    rng = np.random.default_rng(seed)
+    t0 = datetime(2026, 11, 3, 6, 0, 0, tzinfo=timezone.utc)
+    raw_points = []
+    labels_raw = []
+    temp = 28.0
+
+    normal_steps = int(n_steps * 0.62)
+    step = 0
+    normal_rpms = [1500, 1800, 1200, 2100, 2400, 1500, 2000, 1600]
+    rpm_idx = 0
+    plateau_len = max(20, normal_steps // len(normal_rpms))
+    current_target = 26.0 + 22.0 * normal_rpms[0] / 3000.0
+
+    while step < normal_steps:
+        if step % plateau_len == 0 and rpm_idx < len(normal_rpms):
+            rpm = normal_rpms[rpm_idx]
+            current_target = 26.0 + 22.0 * rpm / 3000.0
+            rpm_idx = (rpm_idx + 1) % len(normal_rpms)
+
+        t = t0 + timedelta(seconds=3 * step)
+        for _ in range(3):
+            temp += (current_target - temp) * 1.0 / 12.0
+        noise = float(rng.normal(0, 0.005))
+        raw_points.append(PhysicalTelemetryPoint(timestamp=t, temperature=float(round(temp + noise, 3)), status="valid"))
+        labels_raw.append("normal")
+        step += 1
+
+    heat_steps = int(n_steps * 0.15)
+    heat_target = 37.0 + 45.0 * 0.75
+    for _ in range(heat_steps):
+        t = t0 + timedelta(seconds=3 * step)
+        for _ in range(3):
+            temp += (heat_target - temp) * 1.0 / 12.0
+        noise = float(rng.normal(0, 0.005))
+        raw_points.append(PhysicalTelemetryPoint(timestamp=t, temperature=float(round(temp + noise, 3)), status="valid"))
+        labels_raw.append("heat")
+        step += 1
+
+    stall_steps = int(n_steps * 0.12)
+    stall_target = 37.0 + 55.0 * 0.90
+    for _ in range(stall_steps):
+        t = t0 + timedelta(seconds=3 * step)
+        for _ in range(3):
+            temp += (stall_target - temp) * 1.0 / 6.0
+        noise = float(rng.normal(0, 0.005))
+        raw_points.append(PhysicalTelemetryPoint(timestamp=t, temperature=float(round(temp + noise, 3)), status="valid"))
+        labels_raw.append("stall")
+        step += 1
+
+    over_steps = n_steps - step
+    over_target = 37.0 + 30.0 * 0.80
+    for _ in range(over_steps):
+        t = t0 + timedelta(seconds=3 * step)
+        for _ in range(3):
+            temp += (over_target - temp) * 1.0 / 10.0
+        noise = float(rng.normal(0, 0.005))
+        raw_points.append(PhysicalTelemetryPoint(timestamp=t, temperature=float(round(temp + noise, 3)), status="valid"))
+        labels_raw.append("over")
+        step += 1
+
+    extractor = PhysicalFeatureExtractor(min_history_seconds=45.0, min_history_samples=15)
+    features_list = []
+    final_labels = []
+    final_timestamps = []
+
+    for i in range(len(raw_points)):
+        history_slice = raw_points[:i+1]
+        vec, status, _ = extractor.extract(history_slice, current_time=raw_points[i].timestamp)
+        if status == DetectorBStatus.NORMAL and vec is not None:
+            features_list.append(vec)
+            final_labels.append(labels_raw[i])
+            final_timestamps.append(raw_points[i].timestamp)
+
+    return DatasetContainer(
+        features=np.array(features_list, dtype=float),
+        labels=final_labels,
+        timestamps=final_timestamps,
+        metadata={"feature_columns": list(PHYSICAL_FEATURE_COLUMNS), "data_source": "simulator_temperature"},
+    )

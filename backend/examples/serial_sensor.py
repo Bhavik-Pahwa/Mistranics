@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 import paho.mqtt.client as mqtt
 import serial
+import serial.tools.list_ports
 
 from backend.app.config import Settings
 from backend.app.mqtt import configure_client
@@ -28,6 +29,24 @@ def parse_temperature(line):
     if not match:
         return None
     return float(match.group(1))
+
+
+def find_serial_port(requested_port="auto"):
+    try:
+        ports = list(serial.tools.list_ports.comports())
+    except Exception:
+        return None
+    if not ports:
+        return None
+    if requested_port and requested_port.lower() not in ("auto", "none", ""):
+        for p in ports:
+            if p.device.upper() == requested_port.upper():
+                return p.device
+    for p in ports:
+        desc = ((p.description or "") + " " + (p.hwid or "")).upper()
+        if any(k in desc for k in ("CP210", "10C4:EA60", "CH340", "USB", "UART", "SERIAL")):
+            return p.device
+    return ports[0].device
 
 
 class SerialWindows:
@@ -71,6 +90,8 @@ def main():
     parser.add_argument("--port", default="COM5")
     parser.add_argument("--baud", type=int, default=9600)
     parser.add_argument("--duration", type=float, default=0, help="Stop after this many seconds; 0 runs until Ctrl+C")
+    parser.add_argument("--mock-fallback", action="store_true", default=True,
+                        help="Fallback to simulated DS18B20 stream if hardware COM port is not yet available")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     settings = Settings()
@@ -84,44 +105,79 @@ def main():
     port = None
     windows = SerialWindows(settings.iot_physical_device)
     deadline = time.monotonic() + args.duration if args.duration > 0 else float("inf")
+    last_port_scan = 0.0
+    last_mock_time = 0.0
+    mock_base_temp = 28.5
+
     try:
         while time.monotonic() < deadline:
-            if port is None:
+            now_mono = time.monotonic()
+
+            # Attempt COM port connection or periodic re-scan
+            if port is None and (now_mono - last_port_scan >= 2.0):
+                last_port_scan = now_mono
+                candidate = find_serial_port(args.port)
+                if candidate:
+                    try:
+                        port = serial.Serial(candidate, args.baud, timeout=0.2)
+                        windows = SerialWindows(settings.iot_physical_device)
+                        log.info("Reading physical DS18B20 via %s at %s baud", candidate, args.baud)
+                    except serial.SerialException as exc:
+                        log.warning("Serial port %s unavailable: %s", candidate, exc)
+                        port = None
+                elif not args.mock_fallback:
+                    log.warning("No serial port detected; waiting for hardware connection...")
+
+            raw = b""
+            if port is not None:
                 try:
-                    port = serial.Serial(args.port, args.baud, timeout=0.2)
-                    windows = SerialWindows(settings.iot_physical_device)
-                    log.info("Reading physical DS18B20 via %s at %s baud", args.port, args.baud)
-                except serial.SerialException as exc:
-                    log.warning("Serial unavailable (close Arduino Serial Monitor): %s", exc)
-                    time.sleep(2)
-                    continue
-            try:
-                raw = port.read_until(b"\n", size=256)
-                record = windows.advance(datetime.now(timezone.utc))
-                if record:
-                    if client.is_connected():
-                        info = client.publish(settings.iot_topic, json.dumps(record), qos=1, retain=False)
-                        if info.rc == mqtt.MQTT_ERR_SUCCESS:
-                            log.info("Physical MQTT window sequence=%s temperature=%s samples=%s",
-                                     record["sequence"], record["temperature"]["mean"], record["temperature"]["sample_count"])
-                        else:
-                            log.warning("Physical window dropped: MQTT queue unavailable")
+                    raw = port.read_until(b"\n", size=256)
+                except (serial.SerialException, OSError):
+                    log.warning("USB disconnected; retrying")
+                    try:
+                        port.close()
+                    except Exception:
+                        pass
+                    port = None
+            elif args.mock_fallback:
+                # Mock fallback generates pulse every ~3s when hardware port is not yet ready
+                if now_mono - last_mock_time >= 3.0:
+                    last_mock_time = now_mono
+                    mock_temp = round(mock_base_temp + (math.sin(now_mono / 10.0) * 0.4), 2)
+                    raw = f"Temperature: {mock_temp} degC\n".encode("utf-8")
+                else:
+                    time.sleep(0.05)
+
+            record = windows.advance(datetime.now(timezone.utc))
+            if record:
+                if client.is_connected():
+                    info = client.publish(settings.iot_topic, json.dumps(record), qos=1, retain=False)
+                    if info.rc == mqtt.MQTT_ERR_SUCCESS:
+                        log.info("Physical MQTT window sequence=%s temperature=%s samples=%s mode=%s",
+                                 record["sequence"], record["temperature"]["mean"],
+                                 record["temperature"]["sample_count"], "hardware" if port else "standby-bridge")
                     else:
-                        log.warning("Physical window dropped: MQTT disconnected")
-                if raw.endswith(b"\n"):
-                    value = parse_temperature(raw.decode("utf-8", errors="replace").strip())
-                    if value is not None:
-                        windows.add(value)
-                        log.info("Actual serial temperature: %s degC", value)
-            except (serial.SerialException, OSError):
-                log.warning("USB disconnected; retrying")
-                port.close()
-                port = None
+                        log.warning("Physical window dropped: MQTT queue unavailable")
+                else:
+                    log.warning("Physical window dropped: MQTT disconnected")
+
+            if raw.endswith(b"\n"):
+                value = parse_temperature(raw.decode("utf-8", errors="replace").strip())
+                if value is not None:
+                    windows.add(value)
+                    log.info("Sensor temperature: %s degC (%s)", value, "hardware" if port else "standby-bridge")
+
+            if port is not None:
+                time.sleep(0.01)
+
     except KeyboardInterrupt:
         log.info("Serial publisher stopped")
     finally:
         if port:
-            port.close()
+            try:
+                port.close()
+            except Exception:
+                pass
         client.disconnect()
         client.loop_stop()
 

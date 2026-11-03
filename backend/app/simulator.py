@@ -259,9 +259,10 @@ class MotorSimulator:
         if clock - window["clock"] >= 3:
             values = window["samples"]
             self.sequence = max(self.sequence + 1, time.time_ns() // 1000)
+            end_time = window["start"] + timedelta(seconds=clock - window["clock"])
             self.last_window = dict(schema_version=1, device_id=self.settings.iot_simulation_device,
                 source="simulation", sequence=self.sequence, window_start=window["start"].isoformat(),
-                window_end=(window["start"] + timedelta(seconds=3)).isoformat(), window_duration_seconds=3,
+                window_end=end_time.isoformat(), window_duration_seconds=3,
                 temperature=dict(mean=fmean(values), min=min(values), max=max(values),
                                  sample_count=len(values), unit="degC", status="valid"))
             self.last_window["sensors"] = {
@@ -283,8 +284,8 @@ class MotorSimulator:
             else:
                 self.dropped_windows += 1
                 self.error = "Window dropped: MQTT offline or awaiting acknowledgments"
-            self.window = None
-            self.collect(clock)
+            self.window = {"clock": clock, "start": end_time,
+                           "samples": [self.model.temperature], "sensors": [self.model.sensors()], "next_sample": clock + 1}
         elif clock >= window["next_sample"]:
             window["samples"].append(self.model.temperature)
             window["sensors"].append(self.model.sensors())

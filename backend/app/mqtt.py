@@ -113,8 +113,8 @@ class Subscriber:
                     DomainError,
                     TypeError,
                     RecursionError,
-                ):
-                    log.warning("MQTT rejected invalid telemetry")
+                ) as exc:
+                    log.warning("MQTT rejected invalid telemetry: %s", exc)
                     self.client.ack(message.mid, message.qos)
                     break
                 except Exception:

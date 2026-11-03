@@ -11,7 +11,7 @@ from ML.models.detector_b_schemas import ModelType, DetectorBStatus
 from ML.detector_a.statistical_engine import StatisticalRuleConfig
 from ML.detector_b.trainer import IsolationForestTrainer, load_model_package
 from ML.detector_b.data_physical import generate_physical_dataset, partition_dataset
-from ML.detector_b.data_simulator import generate_simulator_dataset
+from ML.detector_b.data_simulator import generate_simulator_dataset, generate_simulator_temperature_dataset
 from ML.detector_b.train_physical import PhysicalModelTrainer
 from ML.detector_b.train_simulator import SimulatorModelTrainer
 from ML.detector_b.features_physical import PhysicalTelemetryPoint
@@ -89,6 +89,26 @@ def handle_train_simulator(args):
     print(f"    - Decision threshold: {pkg.metadata.decision_threshold:.5f}")
     print(f"    - Training observations: {pkg.metadata.training_samples}")
 
+
+
+def handle_train_simulator_temp(args):
+    print(f"[*] Training Simulator Temperature Isolation Forest ({args.model_version})...")
+    dataset = generate_simulator_temperature_dataset(n_steps=args.steps)
+    splits = partition_dataset(dataset, train_ratio=0.55, val_ratio=0.25, gap_samples=15)
+
+    trainer = PhysicalModelTrainer(
+        model_version=args.model_version,
+        n_estimators=args.n_estimators,
+    )
+    pkg = trainer.train(splits["train_X"], splits["val_X"], splits["val_labels"])
+    pkg.metadata.feature_schema_version = "simulator-temp-features-12"
+    output_path = args.output
+    pkg.save(output_path)
+    print(f"[OK] Simulator Temperature model saved successfully to: {output_path}")
+    print(f"    - Metadata: {os.path.splitext(output_path)[0]}.json")
+    print(f"    - Features: 12 (Simulated Temperature across 3s, 15s, 60s)")
+    print(f"    - Decision threshold: {pkg.metadata.decision_threshold:.5f}")
+    print(f"    - Training observations: {pkg.metadata.training_samples}")
 
 def handle_train(args):
     print(f"[*] Training Isolation Forest model: {args.model_version}...")
@@ -260,6 +280,13 @@ def main():
     train_sim.add_argument("--steps", type=int, default=250)
     train_sim.add_argument("--n-estimators", type=int, default=200)
 
+    # Train simulator temperature command
+    train_sim_temp = subparsers.add_parser("train-simulator-temp", help="Train Simulator Temperature Isolation Forest (12 features)")
+    train_sim_temp.add_argument("--output", type=str, default="ML/models/model_artifacts/simulator_temperature_isolation_forest.joblib")
+    train_sim_temp.add_argument("--model-version", type=str, default="simulator-temp-iso-v2.0")
+    train_sim_temp.add_argument("--steps", type=int, default=350)
+    train_sim_temp.add_argument("--n-estimators", type=int, default=200)
+
     # Simulate command
     sim_parser = subparsers.add_parser("simulate", help="Simulate telemetry stream through pipeline")
     sim_parser.add_argument("--steps", type=int, default=10)
@@ -277,6 +304,9 @@ def main():
         handle_train_physical(args)
     elif args.command == "train-simulator":
         handle_train_simulator(args)
+    elif args.command == "train-simulator-temp":
+        handle_train_simulator_temp(args)
+
     elif args.command == "simulate":
         handle_simulate(args)
     elif args.command == "simulate-dual":

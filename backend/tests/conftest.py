@@ -21,6 +21,7 @@ def app(tmp_path):
         operator_token="operator",
         mqtt_enabled=False,
         retry_seconds=1,
+        iot_enabled=False,
     )
     app = create_app(settings)
     engine = app.state.engine

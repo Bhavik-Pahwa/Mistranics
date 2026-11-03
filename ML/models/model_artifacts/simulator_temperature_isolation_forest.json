@@ -1,0 +1,28 @@
+{
+  "model_version": "simulator-temp-iso-v2.0",
+  "feature_schema_version": "simulator-temp-features-12",
+  "feature_columns": [
+    "temp_mean_3s",
+    "temp_max_3s",
+    "temp_min_3s",
+    "temp_std_3s",
+    "temp_mean_15s",
+    "temp_max_15s",
+    "temp_min_15s",
+    "temp_std_15s",
+    "temp_mean_60s",
+    "temp_max_60s",
+    "temp_min_60s",
+    "temp_std_60s"
+  ],
+  "decision_threshold": -0.5111596080307841,
+  "contamination": "auto",
+  "n_estimators": 200,
+  "training_samples": 195,
+  "validation_samples": 88,
+  "validation_score_min": -0.6772201603601404,
+  "validation_score_mean": -0.5416652055776585,
+  "validation_score_std": 0.064619284023494,
+  "created_at": "2026-11-03T03:57:19.027352Z",
+  "sklearn_version": "1.9.1"
+}

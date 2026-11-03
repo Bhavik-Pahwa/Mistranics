@@ -1,3 +1,10 @@
+try:
+    from ML.detector_b.features_physical import PhysicalFeatureExtractor, PhysicalTelemetryPoint
+    from ML.detector_b.trainer import load_model_package
+    from ML.models.detector_b_schemas import DetectorBStatus
+except ImportError:
+    PhysicalFeatureExtractor = PhysicalTelemetryPoint = load_model_package = DetectorBStatus = None
+
 """Single-process, bounded, source-isolated sensor evaluation pipeline."""
 import asyncio
 import logging
@@ -139,6 +146,10 @@ class TelemetryState:
         self.history = deque(maxlen=60)
         self.detector = RollingZScore(settings)
         self.sensor_detectors = {}
+        self.iso_model_package = None
+        self.iso_history = deque(maxlen=60)
+        self.iso_extractor = PhysicalFeatureExtractor(min_history_seconds=45.0, min_history_samples=15) if PhysicalFeatureExtractor else None
+        self._load_iso_model()
         self.last_received = None
         self.last_received_monotonic = None
         self.selected_at = datetime.now(timezone.utc)
@@ -148,6 +159,25 @@ class TelemetryState:
         self.sequences = {}
         self.window_ends = {}
         self.notify = lambda: None
+
+    def _load_iso_model(self):
+        if not load_model_package:
+            return
+        try:
+            base_dir = Path(__file__).resolve().parents[2] / "ML" / "models" / "model_artifacts"
+            if self.source in ("simulation", "simulator"):
+                sim_path = base_dir / "simulator_temperature_isolation_forest.joblib"
+                if sim_path.exists():
+                    self.iso_model_package = load_model_package(str(sim_path))
+                    log.info("Loaded Isolation Forest model for simulated temperature: %s", sim_path)
+            else:
+                phys_path = base_dir / "physical_isolation_forest.joblib"
+                if phys_path.exists():
+                    self.iso_model_package = load_model_package(str(phys_path))
+                    log.info("Loaded Isolation Forest model for physical temperature: %s", phys_path)
+        except Exception as exc:
+            log.warning("Could not load Isolation Forest model (%s); falling back to statistical detector", exc)
+            self.iso_model_package = None
 
     def connected(self, value):
         with self.lock:
@@ -164,6 +194,8 @@ class TelemetryState:
                 self.history.clear()
                 self.detector.values.clear()
                 self.sensor_detectors.clear()
+                self.iso_history.clear()
+                self._load_iso_model()
                 self.last_received = self.last_received_monotonic = None
                 self.revision += 1
                 self.notify()
@@ -183,20 +215,74 @@ class TelemetryState:
                 log.info("MQTT duplicate/out-of-order sequence ignored source=%s", window.source)
                 return
             previous_end = self.window_ends.get(key)
-            if previous_end and window.window_start < previous_end:
+            if previous_end and (previous_end - window.window_start).total_seconds() > 0.1:
                 raise ValueError("Overlapping or out-of-order window")
             self.sequences[key] = window.sequence
             self.window_ends[key] = window.window_end
-            if window.source != self.source or window.window_end <= self.selected_at:
+            if window.source != self.source or window.window_end < self.selected_at:
                 return
             temperature = window.temperature
-            if temperature.status == "valid":
-                anomaly = self.detector.evaluate(temperature.mean)
+            z_eval = self.detector.evaluate(temperature.mean) if temperature.status == "valid" else dict(
+                status="SENSOR_ERROR", method="STATISTICAL_Z_SCORE", value=None,
+                baseline_mean=None, baseline_std=None, z_score=None,
+                baseline_samples=len(self.detector.values), threshold=self.settings.anomaly_z_threshold)
+
+            if temperature.status != "valid":
+                anomaly = dict(
+                    status="SENSOR_ERROR", method="ISOLATION_FOREST", value=None,
+                    baseline_mean=None, baseline_std=None, z_score=None,
+                    baseline_samples=len(self.detector.values),
+                    threshold=self.settings.anomaly_z_threshold,
+                    isolation_forest=dict(status="SENSOR_ERROR", score=None, threshold=None)
+                )
             else:
-                anomaly = dict(status="SENSOR_ERROR", method="STATISTICAL_Z_SCORE", value=None,
-                               baseline_mean=None, baseline_std=None, z_score=None,
-                               baseline_samples=len(self.detector.values),
-                               threshold=self.settings.anomaly_z_threshold)
+                iso_status = None
+                iso_score = None
+                iso_threshold = None
+                model_ver = "unavailable"
+
+                if PhysicalTelemetryPoint and self.iso_extractor:
+                    pt = PhysicalTelemetryPoint(timestamp=window.window_end, temperature=temperature.mean, status="valid")
+                    self.iso_history.append(pt)
+
+                    if self.iso_model_package is not None:
+                        vec, feat_status, _ = self.iso_extractor.extract(list(self.iso_history), current_time=window.window_end)
+                        iso_threshold = self.iso_model_package.metadata.decision_threshold
+                        model_ver = self.iso_model_package.metadata.model_version
+
+                        if feat_status == DetectorBStatus.INSUFFICIENT_DATA or vec is None:
+                            iso_status = z_eval["status"]
+                        elif feat_status == DetectorBStatus.NORMAL and vec is not None:
+                            try:
+                                score = float(self.iso_model_package.estimator.score_samples([vec])[0])
+                                iso_score = score
+                                iso_status = "ANOMALY" if score <= iso_threshold else "NORMAL"
+                            except Exception:
+                                iso_status = z_eval["status"]
+                        else:
+                            iso_status = feat_status.value
+
+                anomaly = dict(
+                    status=iso_status or z_eval["status"],
+                    method="ISOLATION_FOREST",
+                    value=temperature.mean,
+                    anomaly_score=round(iso_score, 4) if iso_score is not None else None,
+                    decision_threshold=round(iso_threshold, 4) if iso_threshold is not None else None,
+                    model_version=model_ver,
+                    z_score=round(iso_score, 4) if iso_score is not None else z_eval["z_score"],
+                    threshold=round(iso_threshold, 4) if iso_threshold is not None else z_eval["threshold"],
+                    baseline_mean=z_eval["baseline_mean"],
+                    baseline_std=z_eval["baseline_std"],
+                    baseline_samples=len(self.detector.values),
+                    isolation_forest=dict(
+                        score=iso_score,
+                        threshold=iso_threshold,
+                        status=iso_status or z_eval["status"],
+                        model_version=model_ver,
+                        data_source=window.source,
+                        feature_count=12,
+                    )
+                )
             self.latest = dict(source=window.source, device_id=window.device_id,
                                sequence=window.sequence, timestamp=window.window_end.isoformat(),
                                window_start=window.window_start.isoformat(),
