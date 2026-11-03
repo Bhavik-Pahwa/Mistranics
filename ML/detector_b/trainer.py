@@ -10,6 +10,8 @@ from sklearn.ensemble import IsolationForest
 
 from ML.models.features import FEATURE_COLUMNS, FEATURE_SCHEMA_VERSION
 
+ALLOWED_FEATURE_SCHEMAS = {FEATURE_SCHEMA_VERSION, "physical-features-12", "simulator-features-36"}
+
 
 class ModelMetadata(BaseModel):
     model_version: str
@@ -50,7 +52,7 @@ class TrainedModelPackage:
             f.write(self.metadata.model_dump_json(indent=2))
 
 
-def load_model_package(filepath: str) -> TrainedModelPackage:
+def load_model_package(filepath: str, expected_schema: Optional[str] = None) -> TrainedModelPackage:
     """
     Loads a trained IsolationForest estimator and its accompanying metadata.
     Validates feature schema version and columns.
@@ -70,9 +72,15 @@ def load_model_package(filepath: str) -> TrainedModelPackage:
 
     metadata = ModelMetadata.model_validate(meta_data)
 
-    if metadata.feature_schema_version != FEATURE_SCHEMA_VERSION:
+    target_schema = expected_schema
+    if target_schema:
+        if metadata.feature_schema_version != target_schema:
+            raise ValueError(
+                f"Model feature schema mismatch: expected {target_schema}, found {metadata.feature_schema_version}"
+            )
+    elif metadata.feature_schema_version not in ALLOWED_FEATURE_SCHEMAS:
         raise ValueError(
-            f"Model feature schema mismatch: expected {FEATURE_SCHEMA_VERSION}, found {metadata.feature_schema_version}"
+            f"Unknown model feature schema version: {metadata.feature_schema_version}"
         )
 
     return TrainedModelPackage(estimator=estimator, metadata=metadata)
@@ -164,4 +172,3 @@ class IsolationForestTrainer:
         )
 
         return TrainedModelPackage(estimator=model, metadata=metadata)
-

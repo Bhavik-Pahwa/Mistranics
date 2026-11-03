@@ -1,0 +1,28 @@
+{
+  "model_version": "physical-iso-v2.0",
+  "feature_schema_version": "physical-features-12",
+  "feature_columns": [
+    "temp_mean_3s",
+    "temp_max_3s",
+    "temp_min_3s",
+    "temp_std_3s",
+    "temp_mean_15s",
+    "temp_max_15s",
+    "temp_min_15s",
+    "temp_std_15s",
+    "temp_mean_60s",
+    "temp_max_60s",
+    "temp_min_60s",
+    "temp_std_60s"
+  ],
+  "decision_threshold": -0.6713616310682173,
+  "contamination": "auto",
+  "n_estimators": 200,
+  "training_samples": 81,
+  "validation_samples": 40,
+  "validation_score_min": -0.6713616310682173,
+  "validation_score_mean": -0.6482925264332273,
+  "validation_score_std": 0.02227922044258472,
+  "created_at": "2026-11-03T02:41:54.446510Z",
+  "sklearn_version": "1.9.1"
+}

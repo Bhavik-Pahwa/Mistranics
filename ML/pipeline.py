@@ -10,6 +10,7 @@ from ML.models.results import (
     DetectorType,
     DataQualityMetadata,
 )
+from ML.models.detector_b_schemas import DetectorBResult
 from ML.shared.validator import TelemetryValidator, ValidationResult
 from ML.shared.history_buffer import HistoryBuffer, BufferIngestStatus
 from ML.detector_a.engine import DetectorA
@@ -23,6 +24,7 @@ class PipelineOutput(BaseModel):
     limits_result: Optional[DetectorResultEnvelope] = None
     statistical_result: Optional[DetectorResultEnvelope] = None
     isolation_forest_result: Optional[DetectorResultEnvelope] = None
+    detector_b_v2_result: Optional[DetectorBResult] = None
 
     @property
     def all_detector_results(self) -> List[DetectorResultEnvelope]:
@@ -42,13 +44,15 @@ class MachineHealthPipeline:
     1. Validates and normalizes 3-second telemetry windows.
     2. Updates time-ordered history buffer (15s & 60s context).
     3. Executes Detector A (Manufacturer Limits & Statistical Rules).
-    4. Executes Detector B (Feature Extraction & Isolation Forest Inference).
+    4. Executes Detector B (Dual Isolation Forest Inference for Physical and Simulator).
     5. Returns structured results conforming to the unified detector contract.
     """
 
     def __init__(
         self,
         model_package: Optional[TrainedModelPackage] = None,
+        physical_package: Optional[TrainedModelPackage] = None,
+        simulator_package: Optional[TrainedModelPackage] = None,
         late_threshold_seconds: float = 15.0,
     ):
         self.validator = TelemetryValidator()
@@ -56,7 +60,11 @@ class MachineHealthPipeline:
             late_threshold_seconds=late_threshold_seconds
         )
         self.detector_a = DetectorA()
-        self.detector_b = DetectorB(model_package=model_package)
+        self.detector_b = DetectorB(
+            model_package=model_package,
+            physical_package=physical_package,
+            simulator_package=simulator_package,
+        )
 
     def process(
         self, payload: Union[RawTelemetryPayload, Dict[str, Any], str]
@@ -102,55 +110,73 @@ class MachineHealthPipeline:
         # 3. Add to chronological history buffer (with deduplication & late arrival check)
         buf_status = self.history_buffer.add(validated_record)
         if buf_status.is_duplicate:
-            # A duplicate is not a new successful normal evaluation.
             return PipelineOutput(
-                validation_status=val_result, buffer_status=buf_status
+                validation_status=val_result,
+                buffer_status=buf_status,
+                limits_result=None,
+                statistical_result=None,
+                isolation_forest_result=None,
             )
 
-        return self.evaluate_record(
-            validated_record, self.history_buffer, val_result, buf_status
-        )
+        # 4. Detector A Evaluation (Independent)
+        limits_res = None
+        stat_res = None
+        try:
+            limits_res = self.detector_a.evaluate_limits(validated_record)
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Detector A (limits) error: {e}")
+            limits_res = DetectorResultEnvelope(
+                detector=DetectorType.manufacturer_limits,
+                machine_id=validated_record.machine_id,
+                window_id=validated_record.window_id,
+                run_id="err-limits",
+                status=EvaluationStatus.processing_error,
+                skipped_reasons=[str(e)],
+                model_or_config_version="none",
+            )
 
-    def evaluate_record(self, record, history, validation=None, buffer_status=None):
-        """Evaluate a canonical backend record without revalidating/converting telemetry."""
-        validation = validation or ValidationResult(
-            is_valid=True, validated_record=record
-        )
-        results = {}
-        calls = {
-            "limits_result": (
-                DetectorType.manufacturer_limits,
-                lambda: self.detector_a.evaluate_limits(record),
-            ),
-            "statistical_result": (
-                DetectorType.statistical,
-                lambda: self.detector_a.evaluate_statistical(record, history),
-            ),
-            "isolation_forest_result": (
-                DetectorType.isolation_forest,
-                lambda: self.detector_b.evaluate(record, history),
-            ),
-        }
-        for key, (detector, call) in calls.items():
-            try:
-                results[key] = call()
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "Detector failed machine=%s window=%s detector=%s",
-                    record.machine_id,
-                    record.window_id,
-                    detector.value,
-                )
-                results[key] = DetectorResultEnvelope(
-                    detector=detector,
-                    machine_id=record.machine_id,
-                    window_id=record.window_id,
-                    run_id=f"failed-{detector.value}-{record.window_id}",
-                    status=EvaluationStatus.processing_error,
-                    data_quality=DataQualityMetadata(status=ReadingQuality.suspect),
-                    model_or_config_version="unavailable",
-                    skipped_reasons=["Detector evaluation failed"],
-                )
+        try:
+            stat_res = self.detector_a.evaluate_statistical(
+                validated_record, self.history_buffer
+            )
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Detector A (statistical) error: {e}")
+            stat_res = DetectorResultEnvelope(
+                detector=DetectorType.statistical,
+                machine_id=validated_record.machine_id,
+                window_id=validated_record.window_id,
+                run_id="err-stat",
+                status=EvaluationStatus.processing_error,
+                skipped_reasons=[str(e)],
+                model_or_config_version="none",
+            )
+
+        # 5. Detector B Evaluation (Independent)
+        iso_res = None
+        try:
+            iso_res = self.detector_b.evaluate(
+                validated_record, self.history_buffer
+            )
+        except Exception as e:
+            logging.getLogger(__name__).error(f"Detector B error: {e}")
+            iso_res = DetectorResultEnvelope(
+                detector=DetectorType.isolation_forest,
+                machine_id=validated_record.machine_id,
+                window_id=validated_record.window_id,
+                run_id="err-iso",
+                status=EvaluationStatus.processing_error,
+                skipped_reasons=[str(e)],
+                model_or_config_version="none",
+            )
+
+        # Extract Detector B v2 common contract if produced
+        detector_b_v2 = getattr(iso_res, "_dual_result", None)
+
         return PipelineOutput(
-            validation_status=validation, buffer_status=buffer_status, **results
+            validation_status=val_result,
+            buffer_status=buf_status,
+            limits_result=limits_res,
+            statistical_result=stat_res,
+            isolation_forest_result=iso_res,
+            detector_b_v2_result=detector_b_v2,
         )
