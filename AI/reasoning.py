@@ -15,6 +15,7 @@ Hypothesis supporting_evidence/contradicting_evidence must contain only referenc
 Do not claim any mechanical fault is confirmed. Do not recommend hazardous energized work or bypassing guards/interlocks.
 Use INSUFFICIENT_EVIDENCE when documentation or relevant machine evidence is missing and list the missing information.
 Respect stale readings and unavailable detector/configuration statuses. No confidence value is a calibrated probability."""
+SYSTEM += """\nWhen machine_context.documentation_scope is simulation_training, the supplied passages are explicitly fictional training manuals for a virtual simulator. Describe their checks only as simulated control experiments. Never represent them as real manufacturer documentation, approved physical-machine specifications, or authority to perform real equipment repairs."""
 
 
 class InvalidAnswer(Exception):
@@ -118,6 +119,58 @@ def reason(provider, question, history, context, passages):
         {"role": "user", "content": json.dumps(data)},
     ]
     schema = Answer.model_json_schema()
+    if context.get("documentation_scope") == "simulation_training":
+        schema["properties"]["instructions"]["maxItems"] = 1
+        schema["properties"]["sources"]["maxItems"] = 1
+        # This adapter answers a manual question with a sourced virtual check.
+        # It does not ask the small local model to invent diagnostic hypotheses.
+        # Missing telemetry and safety limitations are appended by validation.
+        for field in ("possible_causes", "missing_information", "safety_warnings"):
+            schema["properties"][field]["maxItems"] = 0
+        schema["$defs"]["Instruction"]["properties"]["title"]["const"] = "Virtual troubleshooting check"
+        messages[0]["content"] += "\nFor this virtual training question, give one concise check quoting one complete sentence exactly from the relevant fault section. Include its citation in sources. Prefer the fault page that directly matches the question."
+        quotes = []
+        for passage in passages:
+            if "VIRTUAL TROUBLESHOOTING CHECKS" in passage.get("section", ""):
+                body = passage["text"].partition("\n")[2].strip()
+                quotes.extend(q.strip() for q in re.split(r"(?<=\.)\s+(?=[A-Z])", body) if q.strip())
+        if passages:
+            schema["required"] = list(dict.fromkeys(schema.get("required", []) + ["sources"]))
+            schema["properties"]["sources"]["minItems"] = 1
+        if not quotes:
+            for passage in passages:
+                body = passage["text"].partition("\n")[2].strip()
+                quotes.extend(q.strip() for q in re.split(r"(?<=\.)\s+(?=[A-Z])", body)
+                              if q.strip().startswith(("Check ", "Compare ", "Review ", "Resume ", "Record ")))
+        if quotes:
+            schema["required"] = list(dict.fromkeys(schema.get("required", []) + ["sources", "instructions"]))
+            schema["properties"]["sources"]["minItems"] = 1
+            schema["properties"]["instructions"]["minItems"] = 1
+            for field in ("description", "source_quote"):
+                schema["$defs"]["Instruction"]["properties"][field]["enum"] = quotes
+            # Couple the excerpt, repeated quote and citation as one choice.
+            # Independent enums allow a small model to choose different valid
+            # sentences for description and source_quote, failing grounding.
+            variants, cited = [], {}
+            for quote in quotes:
+                passage = next(p for p in passages if quote in p["text"])
+                citation = {k: passage[k] for k in ("chunk_id", "document_id", "version", "page")}
+                cited[passage["chunk_id"]] = citation
+                properties = {"title": {"const": "Virtual troubleshooting check"},
+                              "description": {"const": quote}, "source_quote": {"const": quote},
+                              "source": {"type": "object", "additionalProperties": False,
+                                         "properties": {k: {"const": v} for k, v in citation.items()},
+                                         "required": list(citation)},
+                              "requires_technician": {"const": True},
+                              "kind": {"const": "diagnostic_check"}}
+                variants.append({"type": "object", "properties": properties,
+                                 "required": list(properties), "additionalProperties": False})
+            schema["properties"]["instructions"]["items"] = {"oneOf": variants}
+            if len(cited) == 1:
+                citation = next(iter(cited.values()))
+                for key, value in citation.items():
+                    schema["$defs"]["Citation"]["properties"][key]["const"] = value
+            messages[0]["content"] += "\nRetrieved virtual checks are available. Include at least one quoted check and its source even when fresh telemetry is unavailable; these are documentation-based virtual experiments, not a diagnosis of the current machine."
     # Constrain each request to its actual evidence scope; validation remains mandatory.
     schema["properties"]["condition_summary"]["const"] = (
         "Selected machine evidence and limitations are attached; mechanical causes remain hypotheses."

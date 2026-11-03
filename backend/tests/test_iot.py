@@ -153,7 +153,7 @@ def test_server_simulator_api_and_stream():
         state = client.get("/api/simulation").json()
         assert state["type"] == "simulation_state"
         assert len(state["waveforms"]["ax"]) == 400
-        assert not state["publisher_enabled"]
+        assert state["publisher_enabled"]
         for changes in [{"rpm": 4000}, {"severity": -1}, {"mode": "bad"}, {"rpm": "1500"}, {"source": "physical"}]:
             assert client.patch("/api/simulation", json=changes).status_code == 422
         response = client.patch("/api/simulation", json={"mode": "heat", "rpm": 2200, "paused": True}).json()
@@ -191,7 +191,7 @@ def test_real_mqtt_ingestion_reconnect(tmp_path):
                                 stderr=subprocess.DEVNULL)
 
     process = broker()
-    cfg = settings(mqtt_host="127.0.0.1", mqtt_port=port, mqtt_client_id="indux-test", mqtt_reconnect_max=2)
+    cfg = settings(simulator_publish_enabled=False, mqtt_host="127.0.0.1", mqtt_port=port, mqtt_client_id="indux-test", mqtt_reconnect_max=2)
     cfg.mqtt_enabled = True
     app = create_app(cfg)
     publisher = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)

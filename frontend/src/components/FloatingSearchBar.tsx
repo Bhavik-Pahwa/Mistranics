@@ -13,7 +13,7 @@ export const FloatingSearchBar: React.FC<FloatingSearchBarProps> = ({
   activeAlertsCount,
 }) => {
   return (
-    <div className="flex items-center justify-between gap-4 w-full pb-2.5 select-none">
+    <div className="global-search-bar flex items-center justify-between gap-4 w-full pb-2.5 select-none">
       {/* Left: Quick System Status Chip */}
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1.5 rounded-full bg-white/70 backdrop-blur-md border border-slate-200/80 px-3 py-1 shadow-2xs">

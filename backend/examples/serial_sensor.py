@@ -74,6 +74,8 @@ def main():
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     settings = Settings()
+    log.info("Physical publisher MQTT broker=%s port=%s topic=%s device=%s",
+             settings.mqtt_host, settings.mqtt_port, settings.iot_topic, settings.iot_physical_device)
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=settings.mqtt_client_id + "-serial-sensor")
     configure_client(client, settings)
     client.max_queued_messages_set(2)

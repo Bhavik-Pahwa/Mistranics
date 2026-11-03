@@ -1,0 +1,51 @@
+[
+  {
+    "document_id": "SIM-MTR-FAULTS",
+    "version": "simulation-v1",
+    "title": "Simulated motor - complete fault handbook",
+    "filename": "sim-mtr-faults.pdf",
+    "modes": [
+      "normal",
+      "imb",
+      "mis",
+      "brg",
+      "loose",
+      "heat",
+      "over",
+      "short",
+      "stall"
+    ],
+    "fictional": true,
+    "asset_id": "simulation-01"
+  },
+  {
+    "document_id": "SIM-MTR-MECHANICAL",
+    "version": "simulation-v1",
+    "title": "Simulated motor - mechanical troubleshooting",
+    "filename": "sim-mtr-mechanical.pdf",
+    "modes": [
+      "normal",
+      "imb",
+      "mis",
+      "brg",
+      "loose"
+    ],
+    "fictional": true,
+    "asset_id": "simulation-01"
+  },
+  {
+    "document_id": "SIM-MTR-ELECTRICAL",
+    "version": "simulation-v1",
+    "title": "Simulated motor - electrical and thermal troubleshooting",
+    "filename": "sim-mtr-electrical.pdf",
+    "modes": [
+      "normal",
+      "heat",
+      "over",
+      "short",
+      "stall"
+    ],
+    "fictional": true,
+    "asset_id": "simulation-01"
+  }
+]

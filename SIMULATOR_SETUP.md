@@ -1,105 +1,147 @@
-# Server simulator and physical ESP32 readings
+﻿# Mistranics prototype: Industrial and Hands-on workspaces
 
-## What runs where
+## Run locally
 
-The simulator is now a server process inside the existing FastAPI application. `backend/app/simulator.py` ports the equations from `ESP32 + MPU6050 Motor Simulator.html`: 1 kHz accelerometer/gyroscope samples, 400-sample waveforms, RMS, thermal response, and Normal / Imbalance / Misalignment / Bearing fault / Loose mount / Overheating modes. It uses fixed 20 ms frames and the original thermal target/time constant. The original browser's frame-dependent RMS smoothing is consequently evaluated at a consistent 50 Hz. Noise remains simulated.
+The entry screen at http://127.0.0.1:5173 always asks which workspace to open. Industrial Mode shows simulated operations; Hands-on Mode shows only physical-source telemetry and anomaly detection. The Workspaces action returns to the entry screen. Choosing a workspace never changes another browser's data source.
 
-The page at `/simulator` reuses the supplied HTML layout but replaces its original script with `backend/examples/simulator_frontend.js`. This script only displays server state and sends control requests; it does not generate sensor readings. All browser windows share one motor. Closing or hiding the page does not stop it, change controls, or stop MQTT publishing. Refreshing reconnects to the current state.
-
-The motor runs when the backend starts; **MQTT publication initially stays off**. Start/stop the publisher independently of pausing/resuming the motor. Restarting the backend resets the model and stops publication. Run only one backend worker.
-
-```text
-Server motor model → 3-second temperature windows → MQTT QoS 1
-                                                   ↓
-DS18B20 → ESP32 working sketch → USB serial bridge → MQTT
-                                                   ↓
-backend MQTT subscriber → Z-score → dashboard WebSocket
-```
-
-The simulator has its own MQTT client. Neither its HTTP control endpoints nor its viewing WebSocket inject dashboard readings directly. Waveforms remain available on the simulator page and its API; only temperature is published to the existing INDUX topic. The original demo WARNING/FAULT labels remain clearly identified as illustrative, separate from the dashboard's statistical detector.
-
-## Running preview
-
-- Dashboard: `http://127.0.0.1:5173`
-- Server simulator: `http://127.0.0.1:5173/simulator`
-- Interactive API documentation: `http://127.0.0.1:8000/docs` (also proxied at `http://127.0.0.1:5173/docs`)
-- Current local test broker: `127.0.0.1:18884`, topic `indux/device-01/telemetry`.
-
-Select **Simulation** on the dashboard and click **Start INDUX publisher** on the simulator page. Change RPM, severity or mode, then return to the dashboard; publishing continues. The first five valid windows build the statistical baseline. Stop the publisher to demonstrate stale-stream detection. Do not run the separate CLI simulator at the same time because it shares the simulation publisher identity.
-
-## Start from a fresh terminal
-
-At `D:\Work\Dev\Mistranics`:
+Install Python dependencies in the repository virtual environment and frontend dependencies:
 
 ```powershell
-.\.venv\Scripts\python -m pip install -r backend/requirements-hardware.txt
+.\.venv\Scripts\python -m pip install -r backend/requirements-dev.txt
+npm --prefix frontend ci
+```
+
+Start Mosquitto (installed separately). The supplied local configuration listens on port 1883:
+
+```powershell
+& 'C:\Program Files\Mosquitto\mosquitto.exe' -c backend/mosquitto.conf
+```
+
+In another terminal, from the repository root:
+
+```powershell
 $env:IOT_ENABLED='true'
 $env:MQTT_ENABLED='true'
 $env:MQTT_HOST='127.0.0.1'
-$env:MQTT_PORT='18884' # Current preview broker; use 1883 for the supplied normal broker config.
-.\.venv\Scripts\python -m uvicorn backend.app.main:create_app --factory --port 8000
+$env:MQTT_PORT='1883'
+$env:SIMULATOR_PUBLISH_ENABLED='true'
+.\.venv\Scripts\python -m uvicorn backend.app.main:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-In another terminal:
+Then start the frontend:
 
 ```powershell
 npm --prefix frontend run dev -- --host 127.0.0.1
 ```
 
-For broker setup and the alternative ESP32 Wi-Fi firmware, see `HARDWARE_IOT_IMPLEMENTATION.md`. Start a new backend only after stopping any older instance on port 8000. No additional server runtime dependency is required for the simulator; the physical USB bridge adds `pyserial==3.5` in an optional hardware requirements file.
+Run **one backend worker**, because the simulation and bounded telemetry histories belong to that process. This prototype profile does not require PostgreSQL or an LLM. The original database/AI application remains available with `IOT_ENABLED=false`.
 
-## Simulator HTTP/OpenAPI endpoints
+Use the same MQTT host and port for the backend and physical publisher. The normal local broker uses **1883**; **18884** is a separate test broker. Publishing to 18884 while the backend listens on 1883 will leave the physical graph empty. Do not run a second simulation publisher with the same `simulation-01` device ID.
+
+## Live ESP32 readings over USB
+
+The working sketch sends `Temperature: ...` lines on **COM5 at 9600 baud**. Serial output needs the USB-to-MQTT bridge before it can reach the frontend. Start the backend, broker and frontend as above, then run this from the repository root in another terminal:
+
+```powershell
+.\Start-LiveReadings.ps1
+```
+
+Keep that terminal running and open **Hands-on Mode** at http://127.0.0.1:5173. Close Arduino Serial Monitor before opening the bridge because only one program can own COM5. The bridge reads actual sensor measurements and publishes physical-source windows through MQTT; it does not flash or change the ESP32 firmware.
+
+For a different port or broker, pass the settings explicitly and use the same broker settings for the backend:
+
+```powershell
+.\Start-LiveReadings.ps1 -SerialPort COM5 -Baud 9600 -BrokerHost 127.0.0.1 -BrokerPort 1883
+```
+
+The bridge logs the broker, port, topic, actual serial temperatures and published windows. The backend's `/api/status?source=physical` should report `stream_status: LIVE`, and the graph should match the serial temperature. With the current sketch, a measurement arrives approximately every 5.5 seconds.
+
+## Workspaces
+
+- **Industrial:** preserves the fleet dashboard layout, with a server-connected Prototype motor and clearly marked illustrative fleet datasets. Temperature, current, vibration, RPM, all three acceleration axes, and all three gyroscope axes can be selected in the motor graph. Open machine analytics to inspect readings with their actual units.
+- **Investigations:** searchable alert cards, open/resolved filters, and keyboard-accessible dialogs with anomaly evidence and troubleshooting steps. Simulator anomalies are added while the workspace is open. The latest 300 records and resolutions are saved in this browser.
+- **Knowledge manuals:** machine illustrations and readable prototype inspection guides. These are not supplied OEM manuals.
+- **Admin:** use `admin@mistranics.com` / `admin123`. Onboard machines and edit names, codes, location, type, and configured sensors. Changes persist locally and appear throughout the workspace. Sensor configuration controls the motor graph tabs; it does not provision hardware or change the server's validated publisher identities. This is a dummy login, not production authentication.
+- **Chat:** centered composer, selected machine and machine-specific conversation history. Conversations persist in this browser. Replies summarize workspace data; no new LLM/RAG connection is claimed.
+- **Hands-on:** a single page with the physical sensor graph, red anomaly points, and detection cards containing time, device, sequence, observed value, baseline, z-score, threshold, and sample count. No chatbot or diagnostic AI. All sensors supplied by the hardware publisher are displayed; existing temperature-only firmware remains compatible. Stream errors and disconnects are distinct from normal readings.
+
+Machine onboarding does not synthesize readings. A newly registered machine remains awaiting data until an acquisition integration is provided. Illustrative fleet machines remain static samples; only the Prototype motor is driven by the server simulator.
+
+## Simulator server
+
+Open http://127.0.0.1:5173/simulator to control the model. The server reuses **Simulator.html** as a viewer and replaces its browser-side generator with `backend/examples/simulator_frontend.js`. Physics continues if the viewer closes.
+
+`backend/app/simulator.py` ports the source's fixed 1 ms sensor sampling, 400-sample buffers, 20 ms model frames, thermal response, current model, and all nine fault modes:
+
+`normal`, `imb`, `mis`, `brg`, `loose`, `heat`, `over`, `short`, `stall`.
+
+Current uses the original speed/load relationship, fault-specific increases and ripple, and smoothing. Stall uses the faster thermal time constant. The model's illustrative WARNING/FAULT labels are separate from the statistical detector.
+
+Publishing starts automatically. Set `SIMULATOR_PUBLISH_ENABLED=false` to opt out. Pause and publisher controls are available in the simulator viewer; there are no reading-source toggles inside either frontend workspace.
+
+```text
+Simulator.html equations -> Python motor model -> 3-second sensor windows
+                                                        |
+                                                        v
+Hardware firmware / serial bridge ------------------> MQTT broker
+                                                        |
+                                                        v
+                                    validation + duplicate detection
+                                                        |
+                                     independent source / sensor baselines
+                                                        |
+                                                        v
+                              source-scoped WebSocket -> graphs + anomalies
+```
+
+All dashboard readings pass through MQTT QoS 1. Simulator control HTTP responses and `/ws/simulation` are viewer state only and do not inject data into dashboard histories. Each source keeps at most 60 windows in memory. A broker interruption triggers reconnects; stale readings remain visible as history with an unavailable stream status. Histories and baselines reset on backend restart.
+
+## API and payload
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/simulation` | Current server-generated readings, waveforms, temperature history, controls, and MQTT status |
-| `PATCH /api/simulation` | Change any subset of `mode`, `rpm` (0–3000), `severity` (0–100), `paused`, `publisher_enabled` |
-| `POST /api/simulation/cool-down` | Reset temperature to 28°C, matching the original button |
-| `WS /ws/simulation` | Read-only state stream at 10 updates/second; immediate snapshot on reconnect |
-| `GET /api/status` | Processed active-source dashboard state, independent of simulator controls |
-| `POST /api/source` | Select `physical` or `simulation` for the dashboard |
+| `GET /api/simulation` | Model state, all sensor waveforms, current, controls, publisher counters |
+| `PATCH /api/simulation` | Mode, RPM 0–3000, severity 0–100, paused, publisher_enabled |
+| `POST /api/simulation/cool-down` | Reset modeled temperature to 28 °C |
+| `WS /ws/simulation` | Server viewer updates |
+| `GET /api/status?source=simulation` | Processed Industrial stream |
+| `GET /api/status?source=physical` | Processed Hands-on stream |
+| `WS /ws/telemetry?source=simulation` | Industrial telemetry subscription |
+| `WS /ws/telemetry?source=physical` | Hands-on telemetry subscription |
 
-Mode values: `normal`, `imb`, `mis`, `brg`, `loose`, `heat`. Controls are server-authoritative and shared by all clients. Invalid values return HTTP 422. Full schema is in `/openapi.json`. These local evaluation APIs are unauthenticated; there is no public deployment.
+`/api/telemetry/latest` supports the same source query. The legacy `/api/source` selection affects only endpoints without a source query; the new workspaces do not call it.
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/api/simulation
-Invoke-RestMethod http://127.0.0.1:8000/api/simulation -Method Patch -ContentType application/json -Body '{"mode":"heat","rpm":2000,"severity":90,"publisher_enabled":true}'
-Invoke-RestMethod http://127.0.0.1:8000/api/simulation -Method Patch -ContentType application/json -Body '{"paused":true}'
-Invoke-RestMethod http://127.0.0.1:8000/api/simulation/cool-down -Method Post
-Invoke-RestMethod http://127.0.0.1:8000/api/simulation -Method Patch -ContentType application/json -Body '{"paused":false,"publisher_enabled":false}'
+The existing schema-version-1 envelope and required `temperature` object are unchanged. Optional `sensors` carries `current`, `vibration`, `rpm`, `ax`, `ay`, `az`, `gx`, `gy`, `gz`. Each sensor has `mean`, `min`, `max`, `sample_count`, `unit`, and `status`:
+
+```json
+"sensors": {
+  "current": {"mean": 1.6, "min": 1.58, "max": 1.62, "sample_count": 3, "unit": "A", "status": "valid"},
+  "vibration": {"mean": 0.025, "min": 0.023, "max": 0.027, "sample_count": 3, "unit": "g", "status": "valid"}
+}
 ```
 
-## Physical readings using the working Arduino sketch
+Units: temperature `degC`, current `A`, acceleration/vibration `g`, gyroscope `deg/s`, speed `rpm`. Acceleration is not mislabeled as velocity in mm/s. Invalid values, non-finite numbers, inconsistent min/mean/max, incorrect units, overlapping windows, unexpected device identities, and stale/future packets are rejected. Error/disconnected sensors require null features and zero samples.
 
-Confirmed user hardware: **ESP32 Dev Module**, DS18B20 DATA on **GPIO 19**, Arduino serial output at **9600 baud**. The existing sketch remains unchanged; no firmware was uploaded. Actual serial readings of **29.56–29.69°C** were received on **COM5**, forwarded through the real broker, and displayed on the dashboard as Physical Sensor / Live. A screenshot is in `.iot-test/real-ds18b20.png` (ignored local verification artifact).
-
-Close Arduino Serial Monitor/Serial Plotter before starting the bridge; only one process can own COM5. Keep the board connected over USB:
-
-```powershell
-$env:MQTT_HOST='127.0.0.1'
-$env:MQTT_PORT='18884' # Match the backend/broker.
-.\.venv\Scripts\python -m backend.examples.serial_sensor --port COM5 --baud 9600
-```
-
-Select **Physical Sensor** on the dashboard. Stop the bridge with Ctrl+C before reopening Arduino Serial Monitor. The bridge retries if USB is disconnected or temporarily busy. To run a bounded acquisition check, append `--duration 40`.
-
-The user's sketch includes a five-second delay plus conversion time. The bridge timestamps each received measurement on the host and groups it into non-overlapping three-second windows. Most published windows therefore contain **one actual sample**; empty windows are omitted. It never copies the last value into empty windows or fabricates intermediate readings. Negative DS18B20 disconnect values such as −127°C produce an explicit error window; USB silence eventually makes the stream stale. Host receive timestamps are used because this sketch supplies no device timestamps. This route requires the USB host and bridge process; direct Wi-Fi publishing remains an optional, separately configured firmware route.
-
-The optional firmware's GPIO default has also been corrected to **19**. Its upload and Wi-Fi behavior have not been hardware-tested. Wiring still requires ESP32-safe 3.3V DATA logic and the actual pull-up resistor (typically 4.7 kΩ to 3.3V).
+Each sensor gets an independent rolling z-score detector. It evaluates against previous values, begins after 5 valid baseline windows, and flags absolute z-scores of at least 3 by default. This detects deviations; it is not a manufacturer-limit or fault-diagnosis model. Legacy top-level temperature fields remain available, while `latest.readings` contains every sensor's statistics and detector result.
 
 ## Validation
 
-Latest results: **70 backend tests passed**, including real Mosquitto/server-simulator integration, with four optional checks skipped. The running-stack browser test passed, including controls, closed-viewer publication, reopening with preserved controls, pause/resume and reconnects. Frontend production build passed; lint has only two existing chatbot warnings. Actual COM5 measurements were verified separately from synthetic test fixtures.
+```powershell
+npm --prefix frontend run build
+npm --prefix frontend run lint
+Set-Location backend
+..\.venv\Scripts\python -m pytest -q
+$env:RUN_MQTT_TESTS='1'
+..\.venv\Scripts\python -m pytest tests/test_iot.py tests/test_simulator.py tests/test_revamp.py -q
+```
+
+Optional browser tests require Playwright, Chrome, and the running local stack:
 
 ```powershell
-Set-Location backend
-$env:RUN_MQTT_TESTS='1'
-..\.venv\Scripts\python -m pytest tests -q
-# With the local stack running and the physical serial bridge stopped:
 $env:RUN_BROWSER_TESTS='1'
 $env:MQTT_HOST='127.0.0.1'
 $env:MQTT_PORT='18884'
 ..\.venv\Scripts\python -m pytest tests/test_iot_browser.py -q
 ```
 
-The backend suite covers the thermal equation, all six modes, bounded/finite signals, validation, server controls, publishing with no viewers, broker reconnection, and serial aggregation without invented samples. Browser tests use synthetic physical-source fixtures: stop the real serial bridge before running them to avoid overlapping publishers. Those fixtures are separate from the actual COM5 acquisition described above.
+Browser tests publish synthetic physical-source fixtures to verify anomaly presentation; they do not verify a physical sensor. Screenshots are saved under `.iot-test/`. The real-MQTT test starts its own isolated broker and exercises duplicates, malformed packets, reconnects, and server publishing.

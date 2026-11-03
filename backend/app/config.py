@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     mqtt_reconnect_max: int = Field(30, ge=1)
     # Opt-in evaluation mode; legacy database/AI/ML application remains available.
     iot_enabled: bool = False
+    simulator_publish_enabled: bool = True
     iot_topic: str = "indux/device-01/telemetry"
     iot_source: Literal["physical", "simulation"] = "physical"
     iot_physical_device: str = "device-01"
@@ -51,8 +52,12 @@ class Settings(BaseSettings):
     ai_llm_model: str = ""
     ai_embedding_model: str = ""
     ai_provider_timeout: int = Field(60, ge=1, le=180)
+    ai_context_tokens: int = Field(8192, ge=2048, le=32768)
+    ai_max_output_tokens: int = Field(2048, ge=256, le=8192)
     ai_stale_seconds: int = Field(15, ge=3)
     ai_ocr_enabled: bool = False
     ai_ocr_language: str = "eng"
     ai_max_pdf_pages: int = Field(100, ge=1, le=500)
     ai_max_chunks: int = Field(1000, ge=1, le=5000)
+    simulation_manual_dir: str = "output/pdf"
+    simulation_knowledge_database: str = ".indux/simulation-knowledge.sqlite3"

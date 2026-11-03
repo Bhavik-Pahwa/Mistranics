@@ -18,6 +18,7 @@ export type NavItemKey =
 
 interface SidebarProps {
   isExpanded: boolean
+  onExit: () => void
   onToggle: () => void
   activeNav: NavItemKey
   onSelectNav: (key: NavItemKey) => void
@@ -45,7 +46,7 @@ const NAV_ITEMS: NavDestination[] = [
     key: 'investigations',
     label: 'Investigations',
     icon: SearchCheck,
-    badge: '3',
+
   },
   {
     key: 'manuals',
@@ -62,6 +63,7 @@ const NAV_ITEMS: NavDestination[] = [
 export const Sidebar: React.FC<SidebarProps> = ({
   isExpanded,
   onToggle,
+  onExit,
   activeNav,
   onSelectNav,
 }) => {
@@ -165,19 +167,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
         >
           <button
             type="button"
-            onClick={() => alert('Log out triggered.')}
+            onClick={onExit}
             className={`apple-press group flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-xs font-semibold text-slate-500 hover:bg-rose-50 hover:text-rose-600 transition-all cursor-pointer ${
               !isExpanded ? 'justify-center' : ''
             }`}
-            aria-label="Log out of Mistranics"
+            aria-label="Return to workspace selection"
           >
             <LogOut className="h-4.5 w-4.5 shrink-0 text-slate-400 group-hover:text-rose-600 transition-colors" />
-            {isExpanded && <span className="truncate">Log out</span>}
+            {isExpanded && <span className="truncate">Workspaces</span>}
           </button>
 
           {!isExpanded && hoveredItem === 'logout' && (
             <div className="absolute left-full top-1/2 ml-3 -translate-y-1/2 whitespace-nowrap rounded-lg bg-slate-900/90 backdrop-blur-md px-2.5 py-1 text-[11px] font-medium text-white shadow-xl z-50">
-              Log out
+              Workspaces
             </div>
           )}
         </div>

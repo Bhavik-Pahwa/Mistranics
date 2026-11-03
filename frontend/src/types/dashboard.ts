@@ -1,4 +1,4 @@
-export type MachineHealthStatus = 'Healthy' | 'Attention needed' | 'Poor health'
+export type MachineHealthStatus = 'Healthy' | 'Attention needed' | 'Poor health' | 'Awaiting data'
 
 export type AlertSeverity = 'Critical' | 'High' | 'Moderate'
 
@@ -14,6 +14,9 @@ export interface TelemetryPoint {
 }
 
 export interface Machine {
+  sensors?: string[]
+  readings?: Record<string, { value: number | null; unit: string }>
+  streamStatus?: string
   id: string
   code: string // e.g. "CMP-003"
   name: string // e.g. "Compressor #3"

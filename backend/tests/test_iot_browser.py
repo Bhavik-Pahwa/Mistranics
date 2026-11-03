@@ -1,7 +1,7 @@
-"""Optional real-browser checks against a running IoT backend, Vite, and MQTT broker.
+"""Optional browser coverage for the two workspaces against a running local stack.
 
-Synthetic physical-source packets below test software only; they are NOT probe evidence.
-Set RUN_BROWSER_TESTS=1, IOT_TEST_URL and MQTT_HOST/MQTT_PORT. Install playwright separately.
+Set RUN_BROWSER_TESTS=1, IOT_TEST_URL, MQTT_HOST, MQTT_PORT.
+Physical packets in this test are synthetic test fixtures, not hardware evidence.
 """
 import json
 import os
@@ -9,111 +9,148 @@ import re
 import threading
 import time
 from pathlib import Path
-
 import paho.mqtt.client as mqtt
 import pytest
-
 from app.config import Settings
 from app.mqtt import configure_client
 from test_iot import payload
 
+pytestmark = pytest.mark.skipif(not os.getenv('RUN_BROWSER_TESTS'), reason='Optional running-stack browser test')
+ARTIFACTS = Path(__file__).resolve().parents[2] / '.iot-test'
 
-@pytest.mark.skipif(not os.getenv("RUN_BROWSER_TESTS"), reason="Optional running-stack browser test")
-def test_live_dashboard_and_browser_simulator():
+
+def test_industrial_navigation_admin_chat_and_mobile():
     from playwright.sync_api import sync_playwright, expect
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel=os.getenv('PLAYWRIGHT_CHANNEL', 'chrome'))
+        context = browser.new_context(viewport={'width': 1440, 'height': 1000})
+        page = context.new_page()
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        url = os.getenv('IOT_TEST_URL', 'http://127.0.0.1:5173')
+        page.goto(url)
+        expect(page.get_by_role('heading', name=re.compile('Know what'))).to_be_visible()
+        page.screenshot(path=str(ARTIFACTS / 'revamp-entry.png'), full_page=True)
+        page.get_by_role('button', name=re.compile('Industrial Mode')).click()
+        expect(page.get_by_label('Machine telemetry')).to_have_value('simulation-01')
+        expect(page.get_by_role('button', name='Motor current', exact=True)).to_be_visible(timeout=10000)
+        page.get_by_role('button', name='Motor current', exact=True).click()
+        expect(page.get_by_role('heading', name='Motor current', exact=True)).to_be_visible()
+        page.screenshot(path=str(ARTIFACTS / 'revamp-industrial.png'), full_page=True)
+        page.get_by_role('button', name='Investigations', exact=True).click()
+        expect(page.get_by_role('heading', name='Investigations', exact=True)).to_be_visible()
+        page.get_by_role('button', name=re.compile('Open investigation')).first.click()
+        expect(page.get_by_role('dialog')).to_be_visible()
+        expect(page.get_by_role('heading', name='Recommended troubleshooting')).to_be_visible()
+        page.get_by_role('button', name='Mark resolved').click()
+        expect(page.get_by_role('dialog').get_by_text(re.compile('Resolved '))).to_be_visible()
+        page.screenshot(path=str(ARTIFACTS / 'revamp-investigation.png'), full_page=True)
+        page.keyboard.press('Escape')
+        expect(page.get_by_role('dialog')).to_have_count(0)
+        page.get_by_role('button', name='Knowledge Manuals').click()
+        page.get_by_role('button', name=re.compile('MTR-001 · PROTOTYPE GUIDE')).click()
+        expect(page.get_by_role('heading', name='Sensor inspection')).to_be_visible()
+        page.keyboard.press('Escape')
+        page.get_by_role('button', name='Admin', exact=True).click()
+        expect(page.get_by_role('heading', name='Admin access')).to_be_visible()
+        page.get_by_label('Email address').fill('admin@mistranics.com')
+        page.get_by_label('Password', exact=True).fill('bad-password')
+        page.get_by_role('button', name='Sign in').click()
+        expect(page.get_by_role('alert')).to_contain_text('credentials')
+        page.get_by_label('Password', exact=True).fill('admin123')
+        page.get_by_role('button', name='Sign in').click()
+        page.get_by_role('button', name='Onboard machine').click()
+        dialog = page.get_by_role('dialog')
+        for label, value in [('name', 'QA motor'), ('Machine code', 'QA-001'), ('type', 'Induction motor'), ('location', 'QA bench')]:
+            dialog.get_by_label(label, exact=True).fill(value)
+        dialog.get_by_role('checkbox', name='rpm', exact=True).check()
+        dialog.get_by_role('button', name='Save machine').click()
+        expect(page.get_by_role('heading', name='QA motor', exact=True)).to_be_visible()
+        row = page.get_by_role('article').filter(has=page.get_by_role('heading', name='QA motor', exact=True))
+        row.get_by_role('button', name='Edit machine').click()
+        dialog.get_by_label('name', exact=True).fill('QA motor updated')
+        dialog.get_by_role('checkbox', name='current', exact=True).uncheck()
+        dialog.get_by_role('button', name='Save machine').click()
+        expect(page.get_by_role('heading', name='QA motor updated')).to_be_visible()
+        page.screenshot(path=str(ARTIFACTS / 'revamp-admin.png'), full_page=True)
+        page.get_by_role('button', name='Chatbot', exact=True).click()
+        page.get_by_label('Target machine').select_option(label='QA motor updated')
+        page.get_by_role('textbox', name='Message about the selected machine').fill('Check my motor')
+        page.get_by_role('button', name='Send message').click()
+        expect(page.get_by_text('Check my motor', exact=True).last).to_be_visible()
+        page.get_by_label('Target machine').select_option('simulation-01')
+        expect(page.get_by_role('button', name='Check my motor', exact=True)).to_have_count(0)
+        page.get_by_label('Target machine').select_option(label='QA motor updated')
+        page.get_by_role('button', name='Check my motor', exact=True).click()
+        expect(page.get_by_text(re.compile('There are no telemetry readings'))).to_be_visible()
+        page.get_by_role('button', name='New conversation').click()
+        page.screenshot(path=str(ARTIFACTS / 'revamp-chat.png'), full_page=True)
+        page.reload()
+        page.get_by_role('button', name=re.compile('Industrial Mode')).click()
+        page.get_by_label('Machine telemetry').select_option(label='QA motor updated')
+        page.get_by_role('button', name='Chatbot', exact=True).click()
+        page.get_by_label('Target machine').select_option(label='QA motor updated')
+        expect(page.get_by_role('button', name='Check my motor', exact=True)).to_be_visible()
+        page.get_by_role('button', name='Return to workspace selection').click()
+        page.set_viewport_size({'width': 390, 'height': 844})
+        page.screenshot(path=str(ARTIFACTS / 'revamp-mobile-entry.png'), full_page=True)
+        page.get_by_role('button', name=re.compile('Industrial Mode')).click()
+        page.screenshot(path=str(ARTIFACTS / 'revamp-mobile-industrial.png'), full_page=True)
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        assert not errors, errors
+        browser.close()
 
+
+def test_physical_anomaly_and_workspace_isolation():
+    from playwright.sync_api import sync_playwright, expect
     cfg = Settings()
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    configure_client(client, cfg)
-    client.connect(cfg.mqtt_host, cfg.mqtt_port)
-    client.loop_start()
-    sequence = time.time_ns() // 1000
-    artifacts = Path(__file__).resolve().parents[2] / ".iot-test"
-    artifacts.mkdir(exist_ok=True)
+    publisher = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    configure_client(publisher, cfg)
+    publisher.connect(cfg.mqtt_host, cfg.mqtt_port)
+    publisher.loop_start()
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel=os.getenv("PLAYWRIGHT_CHANNEL", "chrome"))
-            context = browser.new_context(viewport={"width": 1440, "height": 1000})
+            browser = playwright.chromium.launch(channel=os.getenv('PLAYWRIGHT_CHANNEL', 'chrome'))
+            context = browser.new_context(viewport={'width': 1440, 'height': 1000})
             page = context.new_page()
             errors = []
-            page.on("pageerror", lambda error: errors.append(str(error)))
-            url = os.getenv("IOT_TEST_URL", "http://127.0.0.1:5173")
-            page.request.patch(url + "/api/simulation", data={"publisher_enabled": False, "paused": False})
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            url = os.getenv('IOT_TEST_URL', 'http://127.0.0.1:5173')
             page.goto(url)
-            panel = page.get_by_role("region", name="Live temperature telemetry")
-            select = panel.get_by_label("Telemetry data source")
-            expect(select).to_be_enabled()
-            select.select_option("simulation")
-            expect(select).to_have_value("simulation")
-            select.select_option("physical")
-            expect(select).to_have_value("physical")
+            page.get_by_role('button', name=re.compile('Hands-on Mode')).click()
+            expect(page.get_by_role('heading', name='Temperature', exact=True)).to_be_visible()
+            industrial = context.new_page()
+            industrial.goto(url)
+            industrial.get_by_role('button', name=re.compile('Industrial Mode')).click()
+            sequence = time.time_ns() // 1000
             for index, value in enumerate([32, 32.1, 31.9, 32.1, 31.9, 32, 48]):
                 if index:
-                    # Real three-second acquisition cadence, not a UI synchronization sleep.
-                    threading.Event().wait(3.05)
-                record = payload(sequence + index, value=value)
-                client.publish(cfg.iot_topic, json.dumps(record), qos=1).wait_for_publish(3)
-                expect(panel.get_by_test_id("temperature-value")).to_have_text(f"{value:.2f} °C")
-                status = "WARMING UP" if index < 5 else "NORMAL" if index == 5 else "ANOMALY"
-                expect(panel.get_by_role("status")).to_have_text(status)
-            expect(panel.get_by_role("img").locator('circle[fill="#e11d48"]')).to_have_count(1)
-            page.screenshot(path=str(artifacts / "statistical-anomaly.png"), full_page=True)
-            expect(panel.get_by_role("status")).to_have_text("DISCONNECTED", timeout=14000)
-            record = payload(sequence + 7)
-            record["temperature"].update(mean=None, min=None, max=None, sample_count=0, status="disconnected")
-            client.publish(cfg.iot_topic, json.dumps(record), qos=1).wait_for_publish(3)
-            expect(panel.get_by_role("status")).to_have_text("SENSOR ERROR")
-            expect(panel.get_by_test_id("temperature-value")).to_have_text("— °C")
-            # Failed selection must keep the last confirmed source.
-            page.route("**/api/source", lambda route: route.fulfill(status=503, body="unavailable"))
-            select.select_option("simulation")
-            expect(panel.get_by_role("alert")).to_contain_text("Source selection failed")
-            expect(select).to_have_value("physical")
-            page.unroute("**/api/source")
-            select.select_option("simulation")
-            expect(select).to_have_value("simulation")
-            expect(panel.get_by_role("img").locator("circle")).to_have_count(0)
+                    threading.Event().wait(3.05)  # Sensor acquisition cadence, not a UI wait.
+                publisher.publish(cfg.iot_topic, json.dumps(payload(sequence+index, value=value)), qos=1).wait_for_publish(3)
+            expect(page.get_by_role('heading', name='Temperature anomaly detected').first).to_be_visible(timeout=10000)
+            expect(page.get_by_text('48.00 degC', exact=True).first).to_be_visible()
+            expect(page.get_by_role('img', name=re.compile('Temperature readings')).locator('circle[fill="#e34d59"]')).not_to_have_count(0)
+            expect(industrial.get_by_role('button', name='Motor current', exact=True)).to_be_visible()
+            assert page.request.get(url + '/api/status?source=simulation').json()['latest']['source'] == 'simulation'
+            assert page.request.get(url + '/api/status?source=physical').json()['latest']['source'] == 'physical'
+            page.screenshot(path=str(ARTIFACTS / 'revamp-physical-anomaly.png'), full_page=True)
+            page.set_viewport_size({'width': 390, 'height': 844})
+            page.screenshot(path=str(ARTIFACTS / 'revamp-mobile-physical.png'), full_page=True)
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             simulator = context.new_page()
-            simulator.on("pageerror", lambda error: errors.append(str(error)))
-            simulator.goto(url + "/simulator")
-            simulator.get_by_role("button", name="Start INDUX publisher").click()
-            expect(simulator.locator("#publish-status")).to_contain_text(re.compile(r"[1-9]\d* acknowledged windows"), timeout=12000)
-            expect(panel.get_by_test_id("temperature-value")).not_to_have_text("— °C")
-            expect(panel.get_by_role("status")).to_have_text("WARMING UP")
-            simulator.get_by_role("button", name="Overheating", exact=True).click()
-            simulator.locator("#rpm").fill("2000")
-            expect(simulator.locator("#rv")).to_have_text("2000 RPM")
-            simulator.locator("#sev").fill("90")
-            expect(simulator.locator("#sv")).to_have_text("90%")
-            expect(simulator.locator("#rv")).to_have_text("2000 RPM")
-            simulator.get_by_role("button", name="Pause", exact=True).click()
-            expect(panel.get_by_role("status")).to_have_text("DISCONNECTED", timeout=14000)
-            simulator.get_by_role("button", name="Resume", exact=True).click()
-            expect(panel.get_by_text("Stream: Live", exact=True)).to_be_visible(timeout=12000)
-            # Closing all simulator viewers must not stop publication or reset controls.
-            previous = page.request.get(url + "/api/status").json()["latest"]["sequence"]
-            simulator.close()
-            page.wait_for_function("async (previous) => (await (await fetch('/api/status')).json()).latest.sequence > previous", arg=previous, timeout=10000)
-            simulator = context.new_page()
-            simulator.on("pageerror", lambda error: errors.append(str(error)))
-            simulator.goto(url + "/simulator")
-            expect(simulator.locator("#rv")).to_have_text("2000 RPM")
-            expect(simulator.locator("#sv")).to_have_text("90%")
-            expect(simulator.get_by_role("button", name="Stop INDUX publisher")).to_be_enabled()
-            context.set_offline(True)
-            expect(panel.get_by_text("WebSocket: Disconnected · retrying")).to_be_visible(timeout=10000)
-            context.set_offline(False)
-            expect(panel.get_by_text("WebSocket: Connected")).to_be_visible(timeout=20000)
-            expect(panel.get_by_text("Stream: Live", exact=True)).to_be_visible(timeout=20000)
-            page.screenshot(path=str(artifacts / "browser-simulation.png"), full_page=True)
-            simulator.screenshot(path=str(artifacts / "server-simulator.png"), full_page=True)
-            simulator.get_by_role("button", name="Stop INDUX publisher").click()
-            page.set_viewport_size({"width": 390, "height": 844})
-            expect(select).to_be_visible()
-            expect(panel.get_by_role("img")).to_be_in_viewport()
-            page.screenshot(path=str(artifacts / "mobile.png"), full_page=True)
+            simulator.goto(url + '/simulator')
+            expect(simulator.get_by_role('button', name='Winding short', exact=True)).to_be_enabled()
+            industrial.get_by_role('button', name='Motor current', exact=True).click()
+            simulator.get_by_role('button', name='Winding short', exact=True).click()
+            expect(simulator.get_by_role('button', name='Winding short', exact=True)).to_have_attribute('aria-pressed', 'true')
+            expect(simulator.locator('#cur')).to_contain_text('A')
+            expect(industrial.get_by_label('Sensor detection')).to_contain_text('ANOMALY', timeout=12000)
+            industrial.get_by_role('button', name='Investigations', exact=True).click()
+            expect(industrial.get_by_role('heading', name='Motor current deviation').first).to_be_visible()
+            simulator.get_by_role('button', name='Normal', exact=True).click()
+            simulator.screenshot(path=str(ARTIFACTS / 'revamp-simulator.png'), full_page=True)
             assert not errors, errors
             browser.close()
     finally:
-        client.disconnect()
-        client.loop_stop()
+        publisher.disconnect()
+        publisher.loop_stop()

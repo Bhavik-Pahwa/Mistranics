@@ -1,7 +1,7 @@
-"""Server-owned port of ESP32 + MPU6050 Motor Simulator.html.
+"""Server-owned port of Simulator.html, including ACS712 current and electrical faults.
 
 Sensor generation runs once per backend process, independently of browser clients.
-Only temperature windows are published to the existing INDUX MQTT ingestion path.
+Temperature, current, acceleration, gyroscope, vibration and speed travel through MQTT.
 """
 import asyncio
 import json
@@ -30,14 +30,18 @@ MODES = {
     "brg": ("Bearing fault", "Periodic bearing impulses, ring-down and friction heating."),
     "loose": ("Loose mount", "Random knocks and a half-frequency rattle."),
     "heat": ("Overheating", "Reduced cooling increases the model's thermal target."),
+    "over": ("Overload", "Excess shaft torque raises current and reduces speed."),
+    "short": ("Winding short", "Shorted turns create high current and a 100 Hz hum."),
+    "stall": ("Stall", "Locked rotor draws high current and heats rapidly."),
 }
-EXTRA = dict(normal=0, imb=6, mis=10, brg=25, loose=3, heat=45)
-KEYS = ("ax", "ay", "az", "gx", "gy", "gz")
+EXTRA = dict(normal=0, imb=6, mis=10, brg=25, loose=3, heat=45, over=30, short=35, stall=55)
+EXTRA_I = dict(normal=0, imb=0.05, mis=0.15, brg=0.25, loose=0.03, heat=0.10, over=1.6, short=1.5, stall=4.5)
+KEYS = ("ax", "ay", "az", "gx", "gy", "gz", "cur")
 
 
 class SimulationControl(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
-    mode: Literal["normal", "imb", "mis", "brg", "loose", "heat"] | None = None
+    mode: Literal["normal", "imb", "mis", "brg", "loose", "heat", "over", "short", "stall"] | None = None
     rpm: float | None = Field(default=None, ge=0, le=3000)
     severity: float | None = Field(default=None, ge=0, le=100)
     paused: bool | None = None
@@ -50,6 +54,7 @@ class MotorModel:
         self.random = random.Random(seed)
         self.rpm, self.severity, self.mode = 1500.0, 60.0, "normal"
         self.temperature, self.rms = 28.0, 0.0
+        self.current = self.sample_time = 0.0
         self.phase = self.bearing_phase = self.impulse = self.impulse_time = 0.0
         self.rotation = self.accumulator = self.history_time = self.serial_time = 0.0
         self.paused = False
@@ -61,19 +66,26 @@ class MotorModel:
         return (sum(self.random.random() for _ in range(3)) - 1.5) * 2 * sd
 
     def sample(self):
-        f, severity, scale = self.rpm / 60, self.severity / 100, (self.rpm / 1500) ** 2
+        severity = self.severity / 100
+        effective_rpm = self.rpm * (1 - {"over": 0.12, "stall": 0.95}.get(self.mode, 0) * severity)
+        f, scale = effective_rpm / 60, (effective_rpm / 1500) ** 2
+        self.sample_time += 0.001
         self.phase = (self.phase + 2 * math.pi * f * 0.001) % (4 * math.pi)
         vx = vy = vz = 0.0
+        di = 0.0
         if self.rpm > 0:
             vx = 0.025 * scale * math.sin(self.phase)
             vy = 0.02 * scale * math.cos(self.phase)
+            di = 0.02 * scale * math.sin(self.phase + 1)
             if self.mode == "imb":
                 vx += 0.45 * severity * scale * math.sin(self.phase)
                 vy += 0.45 * severity * scale * math.cos(self.phase)
+                di += 0.05 * severity * scale * math.sin(self.phase + 0.5)
             elif self.mode == "mis":
                 vx += 0.3 * severity * scale * math.sin(2 * self.phase)
                 vy += 0.12 * severity * scale * math.sin(self.phase + 1)
                 vz += 0.3 * severity * scale * math.sin(2 * self.phase + 1)
+                di += 0.08 * severity * scale * math.sin(2 * self.phase)
             elif self.mode == "brg":
                 self.bearing_phase += 3.57 * f * 0.001
                 if self.bearing_phase >= 1:
@@ -85,6 +97,7 @@ class MotorModel:
                 vx += impulse
                 vy += impulse * 0.5
                 vz += impulse * 0.8
+                di += 0.12 * impulse
             elif self.mode == "loose":
                 if self.random.random() < 0.025 * severity:
                     self.impulse = (0.6 + self.random.random() * 1.6) * severity
@@ -93,10 +106,21 @@ class MotorModel:
                 self.impulse_time += 0.001
                 vx += impulse + 0.15 * severity * scale * math.sin(self.phase / 2)
                 vz += impulse * 0.7
+                di += 0.06 * impulse
             elif self.mode == "heat":
                 vx += 0.04 * severity * math.sin(self.phase)
+            elif self.mode == "over":
+                vx += 0.05 * severity * scale * math.sin(self.phase)
+                di += 0.05 * severity * math.sin(self.phase)
+            elif self.mode == "short":
+                hum = math.sin(2 * math.pi * 100 * self.sample_time)
+                vx += 0.10 * severity * hum
+                vy += 0.04 * severity * hum
+                vz += 0.06 * severity * hum
+                di += 0.35 * severity * math.sin(2 * math.pi * 100 * self.sample_time + 0.7)
+        current = max(0, 0.6 + self.rpm / 1500 * (1 + EXTRA_I[self.mode] * severity) + di + self.noise(0.02)) if self.rpm > 0 else 0.0
         readings = (vx + self.noise(0.012), vy + self.noise(0.012), 1 + vz + self.noise(0.012),
-                    vy * 70 + self.noise(0.6), -vx * 70 + self.noise(0.6), vx * 25 + self.noise(0.6))
+                    vy * 70 + self.noise(0.6), -vx * 70 + self.noise(0.6), vx * 25 + self.noise(0.6), current)
         for key, value in zip(KEYS, readings):
             self.buffers[key].append(value)
 
@@ -110,7 +134,8 @@ class MotorModel:
         target = 26 + 22 * self.rpm / 3000
         if self.rpm > 0 or self.mode == "heat":
             target += EXTRA[self.mode] * self.severity / 100
-        self.temperature += (target - self.temperature) * dt / 12
+        self.temperature += (target - self.temperature) * dt / (6 if self.mode == "stall" else 12)
+        self.current = self.current * 0.85 + fmean(list(self.buffers["cur"])[-200:]) * 0.15
         variance = 0
         for key in KEYS[:3]:
             values = list(self.buffers[key])[-200:]
@@ -126,11 +151,17 @@ class MotorModel:
         if self.serial_time >= 3:
             self.serial_time -= 3
             self.lines.append(" ".join(f"{key}={self.buffers[key][-1]:.2f}" for key in ("ax", "ay", "az", "gz"))
-                              + f" T={self.temperature + self.noise(0.05):.1f} rms={self.rms:.3f} {self.demo_status()}")
+                              + f" I={self.current:.2f} T={self.temperature + self.noise(0.05):.1f} rms={self.rms:.3f} {self.demo_status()}")
 
     def demo_status(self):
-        return "FAULT" if self.rms > 0.35 or self.temperature > 75 else (
-            "WARNING" if self.rms > 0.15 or self.temperature > 60 else "NORMAL")
+        ratio = self.current / (0.6 + self.rpm / 1500) if self.rpm > 0 else 0
+        return "FAULT" if self.rms > 0.35 or self.temperature > 75 or ratio > 1.9 else (
+            "WARNING" if self.rms > 0.15 or self.temperature > 60 or ratio > 1.35 else "NORMAL")
+
+    def sensors(self):
+        values = {key: self.buffers[key][-1] for key in KEYS if key != "cur"}
+        values.update(current=self.current, vibration=self.rms, rpm=self.rpm)
+        return values
 
 
 class MotorSimulator:
@@ -139,7 +170,7 @@ class MotorSimulator:
         self.model = MotorModel()
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
-        self.publisher_enabled = False
+        self.publisher_enabled = settings.simulator_publish_enabled
         self.connected = False
         self.revision = 0
         self.sequence = time.time_ns() // 1000
@@ -206,7 +237,7 @@ class MotorSimulator:
             return dict(type="simulation_state", revision=self.revision,
                         timestamp=datetime.now(timezone.utc).isoformat(), modes=MODES,
                         rpm=model.rpm, severity=model.severity, mode=model.mode,
-                        paused=model.paused, temperature=model.temperature, rms=model.rms,
+                        paused=model.paused, temperature=model.temperature, rms=model.rms, current=model.current,
                         demo_status=model.demo_status(), rotation_degrees=model.rotation,
                         waveforms={key: list(values) for key, values in model.buffers.items()},
                         temperature_history=list(model.history), serial=list(model.lines),
@@ -222,7 +253,7 @@ class MotorSimulator:
             return
         if self.window is None:
             self.window = {"clock": clock, "start": datetime.now(timezone.utc),
-                           "samples": [self.model.temperature], "next_sample": clock + 1}
+                           "samples": [self.model.temperature], "sensors": [self.model.sensors()], "next_sample": clock + 1}
             return
         window = self.window
         if clock - window["clock"] >= 3:
@@ -233,6 +264,14 @@ class MotorSimulator:
                 window_end=(window["start"] + timedelta(seconds=3)).isoformat(), window_duration_seconds=3,
                 temperature=dict(mean=fmean(values), min=min(values), max=max(values),
                                  sample_count=len(values), unit="degC", status="valid"))
+            self.last_window["sensors"] = {
+                key: dict(mean=fmean(row[key] for row in window["sensors"]),
+                          min=min(row[key] for row in window["sensors"]),
+                          max=max(row[key] for row in window["sensors"]),
+                          sample_count=len(window["sensors"]), status="valid",
+                          unit="A" if key == "current" else "rpm" if key == "rpm" else "deg/s" if key.startswith("g") else "g")
+                for key in window["sensors"][0]
+            }
             self.pending = {mid: item for mid, item in self.pending.items() if clock - item[1] < 10}
             if self.connected and len(self.pending) < 2:
                 info = self.client.publish(self.settings.iot_topic, json.dumps(self.last_window), qos=1, retain=False)
@@ -248,6 +287,7 @@ class MotorSimulator:
             self.collect(clock)
         elif clock >= window["next_sample"]:
             window["samples"].append(self.model.temperature)
+            window["sensors"].append(self.model.sensors())
             window["next_sample"] += 1
 
     def run(self):

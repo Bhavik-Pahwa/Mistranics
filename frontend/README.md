@@ -1,3 +1,14 @@
+# Mistranics frontend
+
+Start with the split-screen Industrial / Hands-on workspace selection. See [SIMULATOR_SETUP.md](../SIMULATOR_SETUP.md) for the complete backend, broker, sensor payload, dummy admin credentials, and verification commands.
+
+```sh
+npm install
+npm run dev
+```
+
+The development proxy expects the IoT backend on `127.0.0.1:8000`. Prototype admin: `admin@mistranics.com` / `admin123`. Machine configuration, investigations, and chat history persist in browser storage.
+
 # MISTRANICS — Industrial Condition Monitoring Dashboard
 
 A high-performance, single-sight industrial condition monitoring dashboard designed with Apple Design foundations (fluidity, tactile micro-animations, frosted depth materials, and optical restraint).

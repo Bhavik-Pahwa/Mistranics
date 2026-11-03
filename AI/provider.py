@@ -1,11 +1,31 @@
 """Real Ollama HTTP adapter. No synthetic answers or embeddings in application code."""
 
 import math
+import copy
 import httpx
 
 
 class ProviderError(Exception):
     pass
+
+
+def generation_schema(schema):
+    """Ollama's grammar compiler rejects large bounded string repetitions.
+
+    Omit generation-only string length bounds. The original Pydantic schema and
+    citation/quote checks still validate every returned answer server-side.
+    """
+    result = copy.deepcopy(schema)
+    def visit(node):
+        if isinstance(node, dict):
+            node.pop("maxLength", None)
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+    visit(result)
+    return result
 
 
 class OllamaProvider:
@@ -63,9 +83,10 @@ class OllamaProvider:
             {
                 "model": self.settings.ai_llm_model,
                 "messages": messages,
-                "format": schema,
+                "format": generation_schema(schema),
                 "stream": False,
-                "options": {"temperature": 0},
+                "options": {"temperature": 0, "num_ctx": self.settings.ai_context_tokens,
+                            "num_predict": self.settings.ai_max_output_tokens},
             },
         )
         try:

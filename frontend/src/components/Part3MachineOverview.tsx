@@ -98,6 +98,8 @@ export const Part3MachineOverview: React.FC<Part3MachineOverviewProps> = ({
 
   const getStatusBadge = (status: MachineHealthStatus) => {
     switch (status) {
+      case 'Awaiting data':
+        return { bg: 'bg-slate-50 text-slate-500 border-slate-200', icon: AlertTriangle, label: 'Awaiting data' }
       case 'Healthy':
         return {
           bg: 'bg-emerald-50 text-emerald-700 border-emerald-200/90',
@@ -181,7 +183,7 @@ export const Part3MachineOverview: React.FC<Part3MachineOverviewProps> = ({
                       {machine.name}
                     </h3>
                     <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                      {machine.code} • {machine.location.split('—')[0].trim()}
+                      {machine.code} · {machine.location.split('—')[0].trim()}
                     </p>
                   </div>
 
@@ -196,10 +198,7 @@ export const Part3MachineOverview: React.FC<Part3MachineOverviewProps> = ({
                     isLarge ? 'w-full' : 'w-full justify-between'
                   }`}
                 >
-                  <CircularHealthIndicator
-                    percentage={machine.healthPercentage}
-                    isLarge={isLarge}
-                  />
+                  {machine.id === 'simulation-01' || !machine.telemetry.length ? <div className="motor-detection-status"><BadgeIcon size={28}/><strong>{machine.streamStatus || 'Awaiting data'}</strong><small>{machine.id === 'simulation-01' ? 'Statistical detection' : 'Registered machine'}</small></div> : <CircularHealthIndicator percentage={machine.healthPercentage} isLarge={isLarge}/>}
 
                   {!isLarge && (
                     <div className="flex flex-col items-end">

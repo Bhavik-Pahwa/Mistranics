@@ -8,7 +8,7 @@
   panel.className = 'card';
   panel.style.marginBottom = '12px';
   panel.setAttribute('aria-label', 'Simulation server connection');
-  panel.innerHTML = '<button id="publish" disabled>Start INDUX publisher</button> <a href="/docs" target="_blank" rel="noreferrer">OpenAPI documentation</a><p id="connection" role="status">Connecting to simulation server…</p><p id="publish-status"></p><p id="control-error" role="alert"></p><p class="desc">All six modes, temperature, waveforms and serial output come from the server. Only temperature enters the INDUX MQTT pipeline. The original demo WARNING/FAULT thresholds below are illustrative; the dashboard calculates its own statistical anomalies.</p>';
+  panel.innerHTML = '<button id="publish" disabled>Start INDUX publisher</button> <a href="/docs" target="_blank" rel="noreferrer">OpenAPI documentation</a><p id="connection" role="status">Connecting to simulation server…</p><p id="publish-status"></p><p id="control-error" role="alert"></p><p class="desc">All nine modes, current, temperature, waveforms and serial output come from the server. Every sensor enters the MQTT pipeline. The original demo WARNING/FAULT thresholds below are illustrative; the dashboard calculates its own statistical anomalies.</p>';
   document.body.insertBefore(panel, document.querySelector('.kpis'));
   let state = null, connected = false, busy = false, revision = -1;
   let socket = null, receivedAt = 0, retry = null;
@@ -39,6 +39,11 @@
     $('desc').textContent = next.modes[next.mode][1];
     $('tmp').textContent = next.temperature.toFixed(1) + ' °C';
     $('rms').textContent = next.rms.toFixed(2) + ' g';
+    $('cur').textContent = next.current.toFixed(2) + ' A';
+    $('pc').setAttribute('points', points(next.waveforms.cur, 0, 8));
+    const expectedY = 150 - (next.rpm > 0 ? 0.6 + next.rpm / 1500 : 0) / 8 * 150;
+    $('ie').setAttribute('y1', expectedY);
+    $('ie').setAttribute('y2', expectedY);
     $('spd').textContent = next.rpm + ' RPM';
     $('state').textContent = next.demo_status;
     const color = { NORMAL: '#22c55e', WARNING: '#f59e0b', FAULT: '#ef4444' }[next.demo_status];

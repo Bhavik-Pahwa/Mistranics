@@ -1,4 +1,4 @@
-"""Single-process, bounded, database-free temperature evaluation pipeline."""
+"""Single-process, bounded, source-isolated sensor evaluation pipeline."""
 import asyncio
 import logging
 import threading
@@ -55,6 +55,7 @@ class Window(BaseModel):
     window_end: AwareDatetime
     window_duration_seconds: float = Field(strict=True, ge=3, le=3)
     temperature: Temperature
+    sensors: dict[Literal["current", "vibration", "rpm", "ax", "ay", "az", "gx", "gy", "gz"], "SensorReading"] = Field(default_factory=dict)
 
     @field_validator("window_start", "window_end", mode="before")
     @classmethod
@@ -67,7 +68,37 @@ class Window(BaseModel):
     def timestamps(self):
         if abs((self.window_end - self.window_start).total_seconds() - 3) > 0.01:
             raise ValueError("Expected one non-overlapping three-second window")
+        for key, sensor in self.sensors.items():
+            expected = "A" if key == "current" else "rpm" if key == "rpm" else "deg/s" if key.startswith("g") else "g"
+            if sensor.unit != expected:
+                raise ValueError(f"Unexpected unit for {key}")
+            if sensor.status == "valid" and key in ("current", "vibration", "rpm") and sensor.min < 0:
+                raise ValueError(f"Negative {key}")
         return self
+
+
+class SensorReading(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
+    mean: float | None
+    min: float | None
+    max: float | None
+    unit: Literal["A", "g", "deg/s", "rpm"]
+    sample_count: int = Field(ge=0, le=100)
+    status: Literal["valid", "error", "disconnected"]
+
+    @model_validator(mode="after")
+    def features(self):
+        if self.status == "valid":
+            if not self.sample_count or any(v is None for v in (self.min, self.mean, self.max)):
+                raise ValueError("Valid sensor requires numeric samples")
+            if not -100000 <= self.min <= self.mean <= self.max <= 100000:
+                raise ValueError("Inconsistent sensor features")
+        elif self.sample_count or any(v is not None for v in (self.min, self.mean, self.max)):
+            raise ValueError("Sensor errors require null features and zero samples")
+        return self
+
+
+Window.model_rebuild()
 
 
 class SourceSelection(BaseModel):
@@ -107,6 +138,7 @@ class TelemetryState:
         self.latest = None
         self.history = deque(maxlen=60)
         self.detector = RollingZScore(settings)
+        self.sensor_detectors = {}
         self.last_received = None
         self.last_received_monotonic = None
         self.selected_at = datetime.now(timezone.utc)
@@ -131,6 +163,7 @@ class TelemetryState:
                 self.latest = None
                 self.history.clear()
                 self.detector.values.clear()
+                self.sensor_detectors.clear()
                 self.last_received = self.last_received_monotonic = None
                 self.revision += 1
                 self.notify()
@@ -170,6 +203,15 @@ class TelemetryState:
                                window_duration_seconds=3, temperature=temperature.mean,
                                unit=temperature.unit, sample_count=temperature.sample_count,
                                sensor_status=temperature.status, anomaly=anomaly)
+            readings = {"temperature": {**temperature.model_dump(), "anomaly": anomaly}}
+            for key, sensor in window.sensors.items():
+                detector = self.sensor_detectors.setdefault(key, RollingZScore(self.settings))
+                result = detector.evaluate(sensor.mean) if sensor.status == "valid" else dict(
+                    status="SENSOR_ERROR", method="STATISTICAL_Z_SCORE", value=None,
+                    baseline_mean=None, baseline_std=None, z_score=None,
+                    baseline_samples=len(detector.values), threshold=self.settings.anomaly_z_threshold)
+                readings[key] = {**sensor.model_dump(), "anomaly": result}
+            self.latest["readings"] = readings
             self.history.append(self.latest)
             self.last_received = now.isoformat()
             self.last_received_monotonic = time.monotonic()
@@ -186,7 +228,7 @@ class TelemetryState:
                     self.latest["timestamp"])).total_seconds() > self.settings.telemetry_stale_after_seconds:
                 stale = True
             stream = "DISCONNECTED" if stale or not self.mqtt_connected else (
-                "SENSOR_ERROR" if self.latest["sensor_status"] != "valid" else "LIVE")
+                "SENSOR_ERROR" if any(r["status"] != "valid" for r in self.latest["readings"].values()) else "LIVE")
             return dict(type="state", session_id=self.session_id, revision=self.revision,
                         source=self.source, mqtt_connected=self.mqtt_connected, stream_status=stream,
                         stale_after_seconds=self.settings.telemetry_stale_after_seconds,
@@ -195,8 +237,11 @@ class TelemetryState:
 
 def create_iot_app(settings):
     state = TelemetryState(settings)
+    streams = {source: TelemetryState(settings.model_copy(update={"iot_source": source}))
+               for source in ("physical", "simulation")}
     listeners = set()
     motor = MotorSimulator(settings)
+    knowledge = None
 
     def wake():
         for event in tuple(listeners):
@@ -206,29 +251,50 @@ def create_iot_app(settings):
     async def lifespan(app):
         loop = asyncio.get_running_loop()
         state.notify = lambda: loop.call_soon_threadsafe(wake)
+        for stream in streams.values():
+            stream.notify = state.notify
+        def consume(payload):
+            # Preserve the legacy selected-source endpoint while providing isolated workspaces.
+            source = Window.model_validate(payload).source
+            streams[source].consume(payload)
+            state.consume(payload)
+        def connected(value):
+            state.connected(value)
+            for stream in streams.values():
+                stream.connected(value)
         mqtt_settings = settings.model_copy(update={"mqtt_topic": settings.iot_topic, "mqtt_qos": 1})
-        subscriber = Subscriber(mqtt_settings, consume=state.consume, connection_changed=state.connected)
+        subscriber = Subscriber(mqtt_settings, consume=consume, connection_changed=connected)
         app.state.mqtt_subscriber = subscriber
         if settings.mqtt_enabled:
             subscriber.start()
         motor.start()
+        if knowledge:
+            knowledge.start()
         try:
             yield
         finally:
             await asyncio.to_thread(motor.stop)
+            if knowledge:
+                await asyncio.to_thread(knowledge.stop)
             if settings.mqtt_enabled:
                 await asyncio.to_thread(subscriber.stop)
             state.notify = lambda: None
+            for stream in streams.values():
+                stream.notify = lambda: None
 
     app = FastAPI(title="INDUX live temperature", lifespan=lifespan)
     app.state.telemetry = state
+    app.state.streams = streams
     app.state.simulator = motor
     register_simulator_routes(app, motor)
+    if settings.ai_enabled:
+        from AI.simulation import install_simulation_knowledge
+        knowledge = install_simulation_knowledge(app, settings, streams["simulation"])
 
     @app.get("/simulator", response_class=HTMLResponse)
     async def simulator():
         # Reuse the supplied layout; replace browser physics with a server-state viewer.
-        path = Path(__file__).resolve().parents[2] / "ESP32 + MPU6050 Motor Simulator.html"
+        path = Path(__file__).resolve().parents[2] / "Simulator.html"
         html = await asyncio.to_thread(path.read_text, encoding="utf-8")
         before, _, script = html.partition("<script>")
         _, _, after = script.partition("</script>")
@@ -246,15 +312,15 @@ def create_iot_app(settings):
     @app.get("/api/source")
     @app.get("/api/status")
     @app.get("/api/telemetry/latest")
-    async def snapshot():
-        return state.snapshot()
+    async def snapshot(source: Source | None = None):
+        return (streams[source] if source else state).snapshot()
 
     @app.post("/api/source")
     async def select(payload: SourceSelection):
         return state.select(payload.source)
 
     @app.websocket("/ws/telemetry")
-    async def telemetry_socket(websocket: WebSocket):
+    async def telemetry_socket(websocket: WebSocket, source: Source | None = None):
         await websocket.accept()
         event = asyncio.Event()
         listeners.add(event)
@@ -263,7 +329,7 @@ def create_iot_app(settings):
             while True:
                 event.clear()
                 # Snapshots include bounded history; slow clients can safely coalesce updates.
-                await asyncio.wait_for(websocket.send_json(state.snapshot()), timeout=5)
+                await asyncio.wait_for(websocket.send_json((streams[source] if source else state).snapshot()), timeout=5)
                 try:
                     await asyncio.wait_for(event.wait(), timeout=1)
                 except asyncio.TimeoutError:

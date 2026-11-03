@@ -3,5 +3,6 @@ __pycache__/
 .pytest_cache/
 .env
 .iot-test/
+.indux/simulation-knowledge.sqlite3*
 firmware/.pio/
 firmware/include/indux_config.h

@@ -1,261 +1,410 @@
-import React, { useState, useEffect, useRef } from 'react'
-import { Sidebar } from './components/Sidebar'
-import type { NavItemKey } from './components/Sidebar'
-import { FloatingSearchBar } from './components/FloatingSearchBar'
-import { Part1SensorTrends } from './components/Part1SensorTrends'
-import { Part3MachineOverview } from './components/Part3MachineOverview'
-import { Part4ActiveAlerts } from './components/Part4ActiveAlerts'
-import { ChatbotView } from './components/ChatbotView'
-import { MachineAnalyticsModal } from './components/MachineAnalyticsModal'
-import { SearchDialog } from './components/SearchDialog'
-
+﻿import { useEffect, useRef, useState } from "react";
+import { Sidebar } from "./components/Sidebar";
+import type { NavItemKey } from "./components/Sidebar";
+import { FloatingSearchBar } from "./components/FloatingSearchBar";
+import { Part1SensorTrends } from "./components/Part1SensorTrends";
+import { Part3MachineOverview } from "./components/Part3MachineOverview";
+import { Part4ActiveAlerts } from "./components/Part4ActiveAlerts";
+import { ChatbotView } from "./components/ChatbotView";
+import { MachineAnalyticsModal } from "./components/MachineAnalyticsModal";
+import { SearchDialog } from "./components/SearchDialog";
+import { ModeSelection } from "./components/ModeSelection";
+import { HandsOnView, TelemetryChart } from "./components/TelemetryWorkspace";
 import {
-  SAMPLE_MACHINES,
-  INITIAL_ACTIVE_ALERTS,
-  SAMPLE_INVESTIGATIONS,
-} from './data/sampleData'
-import type {
-  Machine,
-  Alert,
-  InvestigationRecord,
-} from './types/dashboard'
-import { Sparkles } from 'lucide-react'
+  Admin,
+  Investigations,
+  InvestigationDetail,
+  Manuals,
+} from "./components/IndustrialPages";
+import { SAMPLE_MACHINES, INITIAL_ACTIVE_ALERTS } from "./data/sampleData";
+import type { Machine, Alert } from "./types/dashboard";
+import { sensorNames, useTelemetry } from "./hooks/useTelemetry";
+import "./revamp.css";
 
-export const App: React.FC = () => {
-  // Shell Navigation State (Default collapsed)
-  const [isSidebarExpanded, setIsSidebarExpanded] = useState<boolean>(false)
-  const [activeNav, setActiveNav] = useState<NavItemKey>('dashboard')
-  const [isSearchOpen, setIsSearchOpen] = useState<boolean>(false)
-
-  // Core Data State
-  const [machines] = useState<Machine[]>(SAMPLE_MACHINES)
-  const [alerts, setAlerts] = useState<Alert[]>(INITIAL_ACTIVE_ALERTS)
-  const [, setInvestigations] = useState<InvestigationRecord[]>(
-    SAMPLE_INVESTIGATIONS
-  )
-
-  // Part 1: Carousel State
-  const [selectedMachineIndex, setSelectedMachineIndex] = useState<number>(0)
-  const [isAutoCycling, setIsAutoCycling] = useState<boolean>(true)
-  const autoCycleTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  // Machine Analytics Modal State
-  const [selectedMachineForAnalytics, setSelectedMachineForAnalytics] =
-    useState<Machine | null>(null)
-
-  // Tactile Toast Feedback State
-  const [toastMessage, setToastMessage] = useState<string | null>(null)
-
-  const showToast = (message: string) => {
-    setToastMessage(message)
-    setTimeout(() => {
-      setToastMessage(null)
-    }, 2800)
+const MOTOR: Machine = {
+  id: "simulation-01",
+  code: "MTR-001",
+  name: "Prototype motor",
+  type: "ESP32 / MPU6050 + ACS712",
+  location: "Simulation bench",
+  priority: 1,
+  healthPercentage: 100,
+  healthStatus: "Healthy",
+  color: "#11998c",
+  telemetry: [],
+  subsystems: [],
+  sensors: [
+    "temperature",
+    "current",
+    "vibration",
+    "rpm",
+    "ax",
+    "ay",
+    "az",
+    "gx",
+    "gy",
+    "gz",
+  ],
+  metrics: { rpm: 1500, pressureBar: 0, runtimeHours: 0, lubeOilTemp: 28 },
+};
+function saved<T>(key: string, fallback: T): T {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || "null");
+    return Array.isArray(value) ? (value as T) : fallback;
+  } catch {
+    return fallback;
   }
-
-  // Auto-advance telemetry carousel every 5s until manual interaction (only when on dashboard)
+}
+function IndustrialWorkspace({ onExit }: { onExit: () => void }) {
+  const [expanded, setExpanded] = useState(true);
+  const [nav, setNav] = useState<NavItemKey>("dashboard");
+  const [search, setSearch] = useState(false);
+  const [registry, setRegistry] = useState<Machine[]>(() =>
+    saved("mistranics.machines.v2", [MOTOR, ...SAMPLE_MACHINES]),
+  );
+  const [alerts, setAlerts] = useState<Alert[]>(() =>
+    saved("mistranics.alerts.v2", INITIAL_ACTIVE_ALERTS),
+  );
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [analytics, setAnalytics] = useState<Machine | null>(null);
+  const [investigationId, setInvestigationId] = useState<string | null>(null);
+  const [storageError, setStorageError] = useState(false);
+  const processed = useRef({ session: "", sequence: 0 });
+  const { state, connected } = useTelemetry("simulation");
+  const latest = state?.latest;
+  const motorReadings = latest?.readings;
+  const motorReady = connected && state?.stream_status === "LIVE";
+  const motorAnomaly = Object.values(motorReadings || {}).some(
+    (r) => r.anomaly.status === "ANOMALY",
+  );
+  const machines = registry.map((m) =>
+    m.id !== "simulation-01"
+      ? m
+      : {
+          ...m,
+          readings: Object.fromEntries(
+            Object.entries(motorReadings || {}).map(([key, r]) => [
+              key,
+              { value: r.mean, unit: r.unit },
+            ]),
+          ),
+          streamStatus: !motorReady
+            ? "Awaiting data"
+            : Object.values(motorReadings || {}).some(
+                  (r) => r.anomaly.status === "WARMING_UP",
+                )
+              ? "Building baseline"
+              : motorAnomaly
+                ? "Deviation detected"
+                : "No deviation",
+          telemetry: (state?.history || []).map((p) => ({
+            time: new Date(p.timestamp).toLocaleTimeString(),
+            temperature: p.readings.temperature?.mean ?? 0,
+            vibration: p.readings.vibration?.mean ?? 0,
+            health: Object.values(p.readings).some(
+              (r) => r.anomaly.status === "ANOMALY",
+            )
+              ? 50
+              : 100,
+          })),
+          metrics: {
+            ...m.metrics,
+            rpm: motorReadings?.rpm?.mean ?? 0,
+            lubeOilTemp: motorReadings?.temperature?.mean ?? 0,
+          },
+          healthPercentage: motorAnomaly ? 50 : 100,
+          healthStatus: (!motorReady
+            ? "Awaiting data"
+            : motorAnomaly
+              ? "Attention needed"
+              : "Healthy") as Machine["healthStatus"],
+        },
+  );
+  const current = machines[selectedIndex] || machines[0];
+  const selectedAlert = alerts.find((a) => a.id === investigationId) || null;
+  // Browser persistence is an external store; failures must be visible.
   useEffect(() => {
-    if (!isAutoCycling || machines.length <= 1 || activeNav !== 'dashboard') {
-      if (autoCycleTimerRef.current) {
-        clearInterval(autoCycleTimerRef.current)
-        autoCycleTimerRef.current = null
-      }
-      return
+    try {
+      localStorage.setItem("mistranics.machines.v2", JSON.stringify(registry));
+      localStorage.setItem(
+        "mistranics.alerts.v2",
+        JSON.stringify(alerts.slice(0, 300)),
+      );
+      // eslint-disable-next-line react/set-state-in-effect
+      setStorageError(false);
+    } catch {
+      // eslint-disable-next-line react/set-state-in-effect
+      setStorageError(true);
     }
-
-    autoCycleTimerRef.current = setInterval(() => {
-      setSelectedMachineIndex((prev) => (prev + 1) % machines.length)
-    }, 5000)
-
-    return () => {
-      if (autoCycleTimerRef.current) {
-        clearInterval(autoCycleTimerRef.current)
-        autoCycleTimerRef.current = null
-      }
-    }
-  }, [isAutoCycling, machines.length, activeNav])
-
-  // Manual navigation permanently stops auto-cycling for the session
-  const handleManualNavigate = (direction: 'prev' | 'next') => {
-    if (isAutoCycling) {
-      setIsAutoCycling(false)
-    }
-
-    setSelectedMachineIndex((prev) => {
-      if (direction === 'prev') {
-        return prev === 0 ? machines.length - 1 : prev - 1
-      } else {
-        return (prev + 1) % machines.length
-      }
-    })
-  }
-
-  // Global Keyboard Shortcuts (Ctrl+K / Cmd+K for Spotlight search)
+  }, [registry, alerts]);
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        setIsSearchOpen((prev) => !prev)
+    if (!state?.history.length) return;
+    if (processed.current.session !== state.session_id)
+      processed.current = { session: state.session_id, sequence: 0 };
+    const unseen = state.history.filter(
+      (sample) => sample.sequence > processed.current.sequence,
+    );
+    if (!unseen.length) return;
+    processed.current.sequence = Math.max(
+      ...unseen.map((sample) => sample.sequence),
+    );
+    const incoming: Alert[] = unseen.flatMap((sample) =>
+      Object.entries(sample.readings)
+        .filter(([, reading]) => reading.anomaly.status === "ANOMALY")
+        .map(([key, reading]) => {
+          const id = `mqtt-${sample.device_id}-${sample.sequence}-${key}`;
+          const machine =
+            registry.find((m) => m.id === "simulation-01") || MOTOR;
+          return {
+            id,
+            machineId: machine.id,
+            machineName: machine.name,
+            machineCode: machine.code,
+            title: `${sensorNames[key]} deviation`,
+            description: `${reading.mean?.toFixed(2)} ${reading.unit} departed from the rolling baseline.`,
+            severity: "High" as const,
+            detectedTime: new Date(sample.timestamp).toLocaleTimeString(),
+            detectedTimestamp: sample.timestamp,
+            whatToCheckPreview:
+              "Review the operating state and sensor connection.",
+            detailedExplanation: `Statistical detection from the server simulator via MQTT. ${sensorNames[key]} has a z-score of ${reading.anomaly.z_score?.toFixed(2)} against a threshold of ±${reading.anomaly.threshold}. This indicates a deviation, not a confirmed mechanical diagnosis.`,
+            evidence: [
+              {
+                metric: sensorNames[key],
+                observed: `${reading.mean?.toFixed(3)} ${reading.unit}`,
+                threshold: `baseline ${reading.anomaly.baseline_mean?.toFixed(3)} ${reading.unit}; z ±${reading.anomaly.threshold}`,
+                timestamp: sample.timestamp,
+              },
+            ],
+            whatToCheck: [
+              "Sensor connection",
+              "Operating load",
+              "Recent simulator fault changes",
+            ],
+            troubleshootingSteps: [
+              {
+                step: 1,
+                instruction: "Confirm the operating condition",
+                detail:
+                  "Check RPM, fault mode and severity in the server simulator.",
+              },
+              {
+                step: 2,
+                instruction: "Compare nearby readings",
+                detail:
+                  "Review temperature, current and vibration together. Confirm that the reading is not a transient.",
+              },
+              {
+                step: 3,
+                instruction: "Record the outcome",
+                detail:
+                  "Document the observed deviation and resolve this investigation once reviewed.",
+              },
+            ],
+            recommendedActions: [
+              "Review the simulation controls and correlate the affected sensors.",
+            ],
+            investigationId: id,
+            investigationTitle: `${sensorNames[key]} deviation`,
+            status: "active" as const,
+          };
+        }),
+    );
+    // Synchronize the external MQTT history with the persisted investigation log.
+    // eslint-disable-next-line react/set-state-in-effect
+    setAlerts((prev) => {
+      const ids = new Set(prev.map((a) => a.id));
+      const fresh = incoming.filter((a) => !ids.has(a.id));
+      return fresh.length ? [...fresh.reverse(), ...prev].slice(0, 300) : prev;
+    });
+  }, [state, registry]);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearch((v) => !v);
       }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
-
-  // Alert Resolution: immediate dismissal, logs to investigation
-  const handleResolveAlert = (alertId: string) => {
-    const alertToResolve = alerts.find((a) => a.id === alertId)
-    if (!alertToResolve) return
-
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+  function resolve(id: string) {
     setAlerts((prev) =>
       prev.map((a) =>
-        a.id === alertId
-          ? {
-              ...a,
-              status: 'resolved',
-              resolvedAt: new Date().toISOString(),
-            }
-          : a
-      )
-    )
-
-    setInvestigations((prev) =>
-      prev.map((inv) =>
-        inv.id === alertToResolve.investigationId
-          ? {
-              ...inv,
-              status: 'Closed',
-              lastUpdated: new Date().toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-              }),
-              resolutionLog: [
-                ...inv.resolutionLog,
-                `Resolved by technician: "${alertToResolve.title}" at ${new Date().toLocaleTimeString()}.`,
-              ],
-            }
-          : inv
-      )
-    )
-
-    showToast(`Alert resolved. Logged to #${alertToResolve.investigationId}`)
+        a.id === id
+          ? { ...a, status: "resolved", resolvedAt: new Date().toISOString() }
+          : a,
+      ),
+    );
   }
-
-  const handleOpenInvestigation = (investigationId: string, alert: Alert) => {
-    showToast(`Opening Investigation #${investigationId} (${alert.machineName})`)
+  function saveMachine(machine: Machine) {
+    setRegistry((prev) =>
+      prev.some((m) => m.id === machine.id)
+        ? prev.map((m) => (m.id === machine.id ? machine : m))
+        : [...prev, machine],
+    );
+    setAlerts((prev) =>
+      prev.map((a) =>
+        a.machineId === machine.id
+          ? { ...a, machineName: machine.name, machineCode: machine.code }
+          : a,
+      ),
+    );
   }
-
-  const activeAlertsCount = alerts.filter((a) => a.status === 'active').length
-
   return (
-    <div className="dashboard-ambient-bg flex h-screen max-h-screen w-screen overflow-hidden font-sans text-slate-800 select-none">
-      {/* Collapsible Sidebar with Integrated Hamburger Button */}
+    <div className="dashboard-ambient-bg industrial-shell flex h-screen w-screen overflow-hidden text-slate-800">
       <Sidebar
-        isExpanded={isSidebarExpanded}
-        onToggle={() => setIsSidebarExpanded((prev) => !prev)}
-        activeNav={activeNav}
+        isExpanded={expanded}
+        onToggle={() => setExpanded((v) => !v)}
+        activeNav={nav}
         onSelectNav={(key) => {
-          setActiveNav(key)
-          if (key === 'dashboard') {
-            showToast('Switched to Operational Dashboard')
-          } else if (key === 'chatbot') {
-            showToast('Switched to Mistranics AI Diagnostic Chat')
-          } else {
-            showToast(`Navigated to ${key.toUpperCase()}`)
-          }
+          setNav(key);
+          setInvestigationId(null);
         }}
+        onExit={onExit}
       />
-
-      {/* Main Full-Height Workspace (Strict 100vh Single Sight) */}
-      <main className="flex-1 min-h-0 p-3 sm:p-4 overflow-y-auto lg:overflow-hidden flex flex-col">
-        {/* Floating Spotlight Search Bar on top */}
+      <main className="industrial-main flex min-w-0 flex-1 flex-col p-3 sm:p-4">
         <FloatingSearchBar
-          onOpenSearch={() => setIsSearchOpen(true)}
+          onOpenSearch={() => setSearch(true)}
           totalMachines={machines.length}
-          activeAlertsCount={activeAlertsCount}
+          activeAlertsCount={alerts.filter((a) => a.status === "active").length}
         />
-        {activeNav === 'dashboard' && <p className="shrink-0 px-1 py-1 text-[10px] text-slate-500">Live temperature is connected separately. Machine overview, alerts and demo trends below use prototype sample data.</p>}
-
-        {/* View Switcher: Dashboard View vs Chatbot View */}
-        {activeNav === 'chatbot' ? (
-          <div className="flex-1 min-h-0 h-full pt-1 overflow-hidden">
-            <ChatbotView
-              machines={machines}
-              onOpenMachineAnalytics={(m) => setSelectedMachineForAnalytics(m)}
-              onNavigateToDashboard={() => setActiveNav('dashboard')}
-            />
-          </div>
-        ) : (
-          /* Operational Dashboard Layout */
-          <div className="flex flex-col lg:flex-row gap-3 sm:gap-4 shrink-0 lg:flex-1 lg:min-h-0 lg:h-full pt-1">
-            {/* Left Column (60% width): Sensor Trends (50%) + Priority Machines (50%) */}
-            <div className="flex flex-col gap-3 sm:gap-4 w-full lg:w-[60%] lg:h-full min-h-0">
-              {/* Part 1: Upper-left (50% height) */}
-              <div className="h-[480px] shrink-0 lg:flex-1 min-h-0 lg:h-1/2">
-                <Part1SensorTrends
-                  machines={machines}
-                  selectedMachineIndex={selectedMachineIndex}
-                  onSelectMachineIndex={(idx) => {
-                    setIsAutoCycling(false)
-                    setSelectedMachineIndex(idx)
-                  }}
-                  onManualNavigate={handleManualNavigate}
-                />
-              </div>
-
-              {/* Part 3: Lower-left (50% height) */}
-              <div className="h-[320px] shrink-0 lg:flex-1 min-h-0 lg:h-1/2">
+        <div className="industrial-mode-label">
+          <span>INDUSTRIAL WORKSPACE</span>
+          <span>
+            Simulated operations ·{" "}
+            {connected && state?.stream_status === "LIVE"
+              ? "Motor stream connected"
+              : "Motor stream waiting"}
+          </span>
+        </div>
+        {storageError && (
+          <p role="alert" className="form-error">
+            Browser storage is unavailable. Changes remain in this session only.
+          </p>
+        )}
+        {nav === "dashboard" && (
+          <div className="industrial-dashboard">
+            <div className="dashboard-left">
+              <section className="dashboard-trends">
+                <div className="industrial-sensor-select">
+                  <label htmlFor="industrial-machine">Machine telemetry</label>
+                  <select
+                    id="industrial-machine"
+                    value={current.id}
+                    onChange={(e) =>
+                      setSelectedIndex(
+                        machines.findIndex((m) => m.id === e.target.value),
+                      )
+                    }
+                  >
+                    {machines.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {current.id === "simulation-01" ? (
+                  <TelemetryChart
+                    state={state}
+                    connected={connected}
+                    visibleSensors={current.sensors}
+                    compact
+                  />
+                ) : (
+                  <div className="sample-trends">
+                    <span className="sample-label">
+                      Illustrative fleet dataset
+                    </span>
+                    <Part1SensorTrends
+                      machines={machines}
+                      selectedMachineIndex={selectedIndex}
+                      onSelectMachineIndex={setSelectedIndex}
+                      onManualNavigate={(direction) =>
+                        setSelectedIndex(
+                          (i) =>
+                            (i +
+                              (direction === "next" ? 1 : -1) +
+                              machines.length) %
+                            machines.length,
+                        )
+                      }
+                    />
+                  </div>
+                )}
+              </section>
+              <section className="dashboard-overview">
                 <Part3MachineOverview
                   machines={machines}
-                  onOpenMachineAnalytics={(machine) =>
-                    setSelectedMachineForAnalytics(machine)
-                  }
+                  onOpenMachineAnalytics={setAnalytics}
                 />
-              </div>
+              </section>
             </div>
-
-            {/* Right Column (40% width): Full-Height Active Alerts & Triage */}
-            <div className="w-full lg:w-[40%] h-[480px] lg:h-full min-h-0">
+            <section className="dashboard-alerts">
               <Part4ActiveAlerts
                 alerts={alerts}
-                onResolveAlert={handleResolveAlert}
-                onOpenInvestigation={handleOpenInvestigation}
+                onResolveAlert={resolve}
+                onOpenInvestigation={(_, alert) => setInvestigationId(alert.id)}
               />
-            </div>
+            </section>
           </div>
         )}
+        {nav === "chatbot" && <ChatbotView machines={machines} />}
+        {nav === "investigations" && (
+          <Investigations
+            alerts={alerts}
+            selected={selectedAlert}
+            onSelect={(a) => setInvestigationId(a?.id || null)}
+            onResolve={resolve}
+          />
+        )}
+        {nav === "manuals" && <Manuals machines={machines} />}
+        {nav === "admin" && <Admin machines={registry} onSave={saveMachine} />}
       </main>
-
-      {/* Machine Analytics Floating Workspace */}
       <MachineAnalyticsModal
-        machine={selectedMachineForAnalytics}
-        onClose={() => setSelectedMachineForAnalytics(null)}
-        onOpenInvestigation={(name) => {
-          showToast(`Opening investigation dossier for ${name}...`)
+        machine={machines.find((m) => m.id === analytics?.id) || null}
+        onClose={() => setAnalytics(null)}
+        onOpenInvestigation={() => {
+          const found = alerts.find((a) => a.machineId === analytics?.id);
+          setAnalytics(null);
+          setNav("investigations");
+          setInvestigationId(found?.id || null);
         }}
       />
-
-      {/* Interactive Global Search Dialog */}
       <SearchDialog
-        isOpen={isSearchOpen}
-        onClose={() => setIsSearchOpen(false)}
+        isOpen={search}
+        onClose={() => setSearch(false)}
         machines={machines}
         alerts={alerts}
-        onSelectMachine={(m) => setSelectedMachineForAnalytics(m)}
+        onSelectMachine={(m) => {
+          setSearch(false);
+          setAnalytics(m);
+        }}
         onSelectAlert={(a) => {
-          showToast(`Selected alert: ${a.title}`)
+          setSearch(false);
+          setNav("investigations");
+          setInvestigationId(a.id);
         }}
       />
-
-      {/* Tactile Micro-Toast */}
-      {toastMessage && (
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full border border-slate-700/60 bg-slate-900/90 px-3.5 py-1.5 text-xs font-semibold text-white shadow-2xl backdrop-blur-xl animate-in fade-in slide-in-from-bottom-2 duration-200">
-          <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
-          <span>{toastMessage}</span>
-        </div>
+      {selectedAlert && nav !== "investigations" && (
+        <InvestigationDetail
+          alert={selectedAlert}
+          onClose={() => setInvestigationId(null)}
+          onResolve={resolve}
+        />
       )}
     </div>
-  )
+  );
 }
-
-export default App
+export const App = () => {
+  const [mode, setMode] = useState<"industrial" | "hands-on" | null>(null);
+  return mode === "industrial" ? (
+    <IndustrialWorkspace onExit={() => setMode(null)} />
+  ) : mode === "hands-on" ? (
+    <HandsOnView onExit={() => setMode(null)} />
+  ) : (
+    <ModeSelection onSelect={setMode} />
+  );
+};
+export default App;

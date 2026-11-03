@@ -6,7 +6,7 @@ import {
   Layers,
 } from 'lucide-react'
 import type { Machine, TelemetryPoint } from '../types/dashboard'
-import { LiveTemperature } from './LiveTemperature'
+
 
 interface Part1SensorTrendsProps {
   machines: Machine[]
@@ -40,20 +40,7 @@ function generateSmoothCurve(points: { x: number; y: number }[]): string {
   return path
 }
 
-export const Part1SensorTrends: React.FC<Part1SensorTrendsProps> = (props) => {
-  const [live, setLive] = useState(true)
-  return <div className="flex h-full min-h-0 flex-col gap-1">
-    <div className="flex shrink-0 gap-2 text-[11px]">
-      <button type="button" aria-pressed={live} onClick={() => setLive(true)}
-        className={`rounded-md px-2 py-1 ${live ? 'bg-blue-100 font-bold text-blue-800' : 'text-slate-600'}`}>Live temperature</button>
-      <button type="button" aria-pressed={!live} onClick={() => setLive(false)}
-        className={`rounded-md px-2 py-1 ${!live ? 'bg-blue-100 font-bold text-blue-800' : 'text-slate-600'}`}>Demo machine trends</button>
-    </div>
-    <div className="min-h-0 flex-1">{live ? <LiveTemperature /> : <DemoSensorTrends {...props} />}</div>
-  </div>
-}
-
-const DemoSensorTrends: React.FC<Part1SensorTrendsProps> = ({
+export const Part1SensorTrends: React.FC<Part1SensorTrendsProps> = ({
   machines,
   selectedMachineIndex,
   onSelectMachineIndex,
