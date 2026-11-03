@@ -1,0 +1,136 @@
+services:
+  # ---------------------------------------------------------------------------
+  # MQTT Message Broker (Eclipse Mosquitto)
+  # ---------------------------------------------------------------------------
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: mistranics-mqtt
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z localhost 1883 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - mistranics-net
+
+  # ---------------------------------------------------------------------------
+  # Backend API + IoT Pipeline + Motor Simulator + ML Isolation Forest
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mistranics-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - IOT_ENABLED=true
+      - MQTT_ENABLED=true
+      - MQTT_HOST=mqtt
+      - MQTT_PORT=1883
+      - MQTT_CLIENT_ID=indux-backend
+      - IOT_TOPIC=indux/device-01/telemetry
+      - IOT_SOURCE=physical
+      - IOT_PHYSICAL_DEVICE=device-01
+      - IOT_SIMULATION_DEVICE=simulation-01
+      - ANOMALY_Z_THRESHOLD=3.0
+      - ANOMALY_BASELINE_SIZE=20
+      - ANOMALY_MIN_BASELINE_SAMPLES=5
+      - ANOMALY_STD_FLOOR=0.1
+      - TELEMETRY_STALE_AFTER_SECONDS=10
+      - REGISTRY_FILE=examples/registry.json
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      mqtt:
+        condition: service_healthy
+    networks:
+      - mistranics-net
+
+  # ---------------------------------------------------------------------------
+  # USB / Serial to MQTT Bridge (Hardware or Standby-Fallback Stream)
+  # ---------------------------------------------------------------------------
+  serial-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mistranics-serial-bridge
+    restart: unless-stopped
+    command: ["python", "-m", "backend.examples.serial_sensor", "--port", "auto"]
+    environment:
+      - MQTT_HOST=mqtt
+      - MQTT_PORT=1883
+      - MQTT_CLIENT_ID=indux-serial-sensor
+      - IOT_TOPIC=indux/device-01/telemetry
+      - IOT_PHYSICAL_DEVICE=device-01
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      mqtt:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    networks:
+      - mistranics-net
+
+  # ---------------------------------------------------------------------------
+  # Frontend Web Dashboard (React + Vite SPA + Nginx Reverse Proxy)
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mistranics-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - mistranics-net
+
+  # ---------------------------------------------------------------------------
+  # Optional Relational Database (for legacy DB inspection mode)
+  # Activated with: docker compose --profile db up
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: mistranics-postgres
+    restart: unless-stopped
+    profiles:
+      - db
+    environment:
+      POSTGRES_USER: mistranics
+      POSTGRES_PASSWORD: mistranics
+      POSTGRES_DB: mistranics
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mistranics"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - mistranics-net
+
+networks:
+  mistranics-net:
+    driver: bridge
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  postgres_data:
+
